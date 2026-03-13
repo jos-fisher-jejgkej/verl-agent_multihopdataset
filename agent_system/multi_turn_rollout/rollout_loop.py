@@ -25,7 +25,7 @@ from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict
 from agent_system.environments import EnvironmentManagerBase
 from typing import List, Dict
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
-
+import copy
 class TrajectoryCollector:
     def __init__(self, config, tokenizer: PreTrainedTokenizer, processor=None):
         """
@@ -238,6 +238,9 @@ class TrajectoryCollector:
             success: Dict[str, np.ndarray],
             traj_uid: np.ndarray,
             tool_callings: np.ndarray,
+            # retrieved_doc_ids: List[List[str]],
+            episode_rollback_count: np.ndarray,
+            is_train
             ) -> DataProto:
         """
         Collect and organize trajectory data, handling batch size adjustments to meet parallel training requirements.
@@ -270,11 +273,30 @@ class TrajectoryCollector:
                     data['episode_lengths'] = episode_lengths[bs]
                     # tool_callings
                     data['tool_callings'] = tool_callings[bs]
+                    # # retrieved_doc_ids
+                    # data['retrieved_doc_ids'] = retrieved_doc_ids[bs]
+                    # episode_rollback_count
+                    if episode_rollback_count is not None:
+                        data['episode_rollback_count'] = episode_rollback_count[bs]
+
                     # success_rate
                     for key, value in success_rate.items():
                         data[key] = value
 
                     effective_batch.append(data)
+        
+        # 保留无效步骤，作为错误案例，保留从错误中学习的可能。基于结果奖励使用组内结果奖励均值（即不考虑该样本的基于结果的优势），使用过程奖励来定义价值
+        # 目前只在训练时，进行回退
+        if is_train and self.config.algorithm.use_RollBacked_Step:
+            uid_all = np.array([data['uid'] for data in effective_batch])
+            for data in effective_batch:
+                if data['is_rollback_step']:
+                    total_output_rewards = []
+                    matched_indices = np.where(uid_all == data['uid'])[0]
+                    for indice in matched_indices:
+                        if effective_batch[indice]['is_rollback_step'] == False:
+                            total_output_rewards.append(effective_batch[indice]['episode_rewards'])
+                    data['episode_rewards'] = sum(total_output_rewards) / len(total_output_rewards)
             
         # Convert trajectory data to DataProto format
         gen_batch_output = DataProto.from_single_dict(
@@ -328,6 +350,7 @@ class TrajectoryCollector:
         episode_lengths = np.zeros(batch_size, dtype=np.float32)
         episode_rewards = np.zeros(batch_size, dtype=np.float32)
         tool_callings = np.zeros(batch_size, dtype=np.float32)
+        # retrieved_doc_ids = [[] for _ in range(batch_size)]
         # Trajectory collection loop
         for _step in range(self.config.env.max_steps):
             active_masks = np.logical_not(is_done)
@@ -378,6 +401,14 @@ class TrajectoryCollector:
 
             if 'tool_calling' in infos[0]:
                 tool_callings[active_masks] += np.array([info['tool_calling'] for info in infos], dtype=np.float32)[active_masks]
+            
+            # if 'retrieved_doc_ids' in infos[0]:
+            #     for i, info in enumerate(infos):
+            #         if active_masks[i]:
+            #             retrieved_doc_ids[i].append(info['retrieved_doc_ids'])
+            if 'retrieved_doc_ids' in infos[0]:
+                batch.non_tensor_batch['retrieved_doc_ids'] = [info['retrieved_doc_ids'] for info in infos]
+                
             # Create reward tensor, only assign rewards for active environments
             # episode_rewards += torch_to_numpy(rewards) * torch_to_numpy(active_masks)
             episode_rewards[active_masks] += torch_to_numpy(rewards)[active_masks]
@@ -411,8 +442,265 @@ class TrajectoryCollector:
                     episode_lengths=episode_lengths,
                     )
         
+        # return total_batch_list, episode_rewards, episode_lengths, success, traj_uid, tool_callings, retrieved_doc_ids
         return total_batch_list, episode_rewards, episode_lengths, success, traj_uid, tool_callings
     
+    
+    def vanilla_multi_turn_loop_use_Rollback(
+            self,
+            gen_batch: DataProto, 
+            actor_rollout_wg, 
+            envs: EnvironmentManagerBase,
+            ) -> DataProto:
+        """
+        Collects trajectories through parallel agent-environment agent_loop.
+        Parameters:
+            gen_batch (DataProto): Initial batch with prompts to start the agent_loop
+            actor_rollout_wg (WorkerGroup): Worker group containing the actor model for policy decisions
+            envs (EnvironmentManagerBase): Environment manager containing parallel environment instances
+        
+        Returns:
+            total_batch_list (List[Dict]): List of trajectory data for each environment
+            episode_rewards (np.ndarray): Total rewards for each environment
+            episode_lengths (np.ndarray): Total steps for each environment
+            success (Dict[str, np.ndarray]): Success samples for each environment
+            traj_uid (np.ndarray): Trajectory unique identifiers
+        """
+
+        batch_size = len(gen_batch.batch)
+
+        # Initial observations from the environment
+        obs, infos = envs.reset(kwargs=gen_batch.non_tensor_batch.pop('env_kwargs', None))
+
+        lenght_obs = len(obs['text']) if obs['text'] is not None else len(obs['image'])
+        assert len(gen_batch.batch) == lenght_obs, f"gen_batch size {len(gen_batch.batch)} does not match obs size {lenght_obs}"
+        
+        if self.config.env.rollout.n > 0: # env grouping
+            uid_batch = []
+            for i in range(batch_size):
+                if i % self.config.env.rollout.n == 0:
+                    uid = str(uuid.uuid4())
+                uid_batch.append(uid)
+            uid_batch = np.array(uid_batch, dtype=object)
+        else: # no env grouping, set all to the same uid
+            uid = str(uuid.uuid4())
+            uid_batch = np.array([uid for _ in range(len(gen_batch.batch))], dtype=object)
+        is_done = np.zeros(batch_size, dtype=bool)
+        traj_uid = np.array([str(uuid.uuid4()) for _ in range(batch_size)], dtype=object)
+        total_batch_list = [[] for _ in range(batch_size)]
+        total_infos = [[] for _ in range(batch_size)]
+        episode_lengths = np.zeros(batch_size, dtype=np.float32)
+        episode_rewards = np.zeros(batch_size, dtype=np.float32)
+        tool_callings = np.zeros(batch_size, dtype=np.float32)
+        # retrieved_doc_ids = [[] for _ in range(batch_size)]
+        
+        # 新增历史检索结果
+        history_retrieved_doc_ids = [[] for _ in range(batch_size)]
+        
+        ######## 目标文档 ###################################################################################
+        target_retrieved_doc_ids = {}
+        for i in range(len(gen_batch)):
+            question = gen_batch.non_tensor_batch['extra_info'][i]['question']
+            if question not in target_retrieved_doc_ids:
+                target_retrieved_doc_ids[question] = []
+                for step in gen_batch.non_tensor_batch["extra_info"][i]["steps"]:
+                    target_retrieved_doc_ids[question].extend(step["target_documents_id"])
+        ###########################################################################################
+        
+        # 核心新增：回退相关初始化
+        rollback_count = np.zeros(batch_size, dtype=int)  # 每条轨迹的回退次数
+        max_rollback = self.config.algorithm.Max_Rollback_Step  # 每条轨迹最多回退2次
+        prev_traj_env_states = [None] * batch_size  # 每条轨迹的环境状态
+        
+        valid_step_counts = np.zeros(batch_size, dtype=int)
+        max_steps = self.config.env.max_steps
+        episode_rollback_count = np.zeros(batch_size, dtype=np.float32)
+        
+        # Trajectory collection loop
+        # for _step in range(self.config.env.max_steps):
+        while True:
+            
+            active_masks = np.logical_not(is_done)
+            
+            # ========== 关键优化：仅保存活跃轨迹的环境状态 ==========
+            for i in range(batch_size):
+                if active_masks[i]:
+                    # 保存单条轨迹的环境状态（而非全量）
+                    prev_traj_env_states[i] = envs.save_state(i)
+            # prev_obs = obs  # 保存当前观测
+            prev_obs = copy.deepcopy(obs)  # 关键修改：使用deepcopy
+            
+            batch = self.preprocess_batch(gen_batch=gen_batch, obs=obs)
+
+            batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
+            non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
+            if "multi_modal_data" in batch.non_tensor_batch:
+                non_tensor_batch_keys_to_pop.append("multi_modal_data")
+            if "raw_prompt" in batch.non_tensor_batch:
+                non_tensor_batch_keys_to_pop.append("raw_prompt")
+            if "tools_kwargs" in batch.non_tensor_batch:
+                non_tensor_batch_keys_to_pop.append("tools_kwargs")
+            batch_input = batch.pop(
+                batch_keys=batch_keys_to_pop,
+                non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
+            )
+
+            batch_input.meta_info = gen_batch.meta_info
+
+            # pad to be divisible by dp_size
+            batch_input_padded, pad_size = pad_dataproto_to_divisor(batch_input, actor_rollout_wg.world_size)
+            batch_output_padded = actor_rollout_wg.generate_sequences(batch_input_padded)
+            # # unpad
+            batch_output = unpad_dataproto(batch_output_padded, pad_size=pad_size)
+
+            batch.non_tensor_batch['uid'] = uid_batch
+            batch.non_tensor_batch['traj_uid'] = traj_uid
+
+            batch = batch.union(batch_output)
+            
+            text_actions = self.tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
+            
+            next_obs, rewards, dones, infos = envs.step(text_actions)
+
+            assert len(rewards) == batch_size, f"env should return rewards for all environments, got {len(rewards)} rewards for {batch_size} environments"
+            
+            if len(rewards.shape) == 2:
+                rewards = rewards.squeeze(1)
+            if len(dones.shape) == 2:
+                # dones is numpy, delete a dimension
+                dones = dones.squeeze(1)
+
+            # 核心新增：检索文档处理 + 回退逻辑
+            need_rollback = np.zeros(batch_size, dtype=bool)  # 标记需要回退的轨迹
+            if 'retrieved_doc_ids' in infos[0]:
+                for i, info in enumerate(infos):
+                    if not active_masks[i]:
+                        continue
+                    
+                    # 1. 记录当前检索的文档
+                    curr_retrieved = info.get('retrieved_doc_ids', [])
+                    # retrieved_doc_ids[i].append(curr_retrieved)
+                    
+                    # 2. 若成功检索 curr_retrieved != None
+                    if curr_retrieved:
+                        # 3. 获取该轨迹的目标文档列表
+                        question = gen_batch.non_tensor_batch['extra_info'][i]['question']
+                        # target_docs = target_retrieved_doc_ids[question]
+                        current_target_docs = set(target_retrieved_doc_ids[question]) - set(history_retrieved_doc_ids[i])
+                            
+                        # 4. 检查是否有检索文档在目标文档中
+                        has_valid_doc = any(doc in current_target_docs for doc in curr_retrieved)
+                        if not has_valid_doc and rollback_count[i] < max_rollback:
+                            # 标记需要回退
+                            need_rollback[i] = True
+                            rollback_count[i] += 1  # 回退次数+1
+                            continue
+                        
+                        history_retrieved_doc_ids[i].extend(curr_retrieved)
+                        
+            
+            # 正常更新奖励和步数（仅非回退的轨迹）
+            non_rollback_mask = np.logical_not(need_rollback)
+            valid_masks = np.logical_and(active_masks, non_rollback_mask)
+            # 关键修改：仅非回退的轨迹增加有效步数计数
+            valid_step_counts[non_rollback_mask] += 1
+            
+            if 'tool_calling' in infos[0]:
+                tool_callings[valid_masks] += np.array([info['tool_calling'] for info in infos], dtype=np.float32)[valid_masks]
+            
+            episode_rewards[valid_masks] += torch_to_numpy(rewards)[valid_masks]
+            episode_lengths[valid_masks] += 1
+            episode_rollback_count[need_rollback] += 1
+
+            # 回退的batch不会被放进total_batch_list，所以可以不做修改
+            if 'is_action_valid' in infos[0]:
+                batch.non_tensor_batch['is_action_valid'] = np.array([info['is_action_valid'] for info in infos], dtype=bool)
+            else:
+                batch.non_tensor_batch['is_action_valid'] = np.ones(batch_size, dtype=bool)
+            if 'retrieved_doc_ids' in infos[0]:
+                batch.non_tensor_batch['retrieved_doc_ids'] = [info['retrieved_doc_ids'] for info in infos]
+                
+            batch.non_tensor_batch['rewards'] = torch_to_numpy(rewards, is_object=True)
+            batch.non_tensor_batch['active_masks'] = torch_to_numpy(active_masks, is_object=True)
+            
+            # 标识该步骤是否被回退, 用于后续分配结果奖励
+            batch.non_tensor_batch['is_rollback_step'] = need_rollback
+            
+            # 更新轨迹数据
+            batch_list: list[dict] = to_list_of_dict(batch)
+            for i in range(batch_size):
+                # 使用所有的步骤
+                if self.config.algorithm.use_RollBacked_Step:
+                    total_batch_list[i].append(batch_list[i])
+                    total_infos[i].append(infos[i])
+                # 只使用所有 非回退步骤
+                else:
+                    # if valid_masks[i]:
+                    if non_rollback_mask[i]:
+                        total_batch_list[i].append(batch_list[i])
+                        total_infos[i].append(infos[i])
+
+            # Update done states
+            is_done = np.logical_or(is_done, dones)
+                
+            # 检查终止条件：所有轨迹达到最大步数 或 所有环境都结束
+            all_reach_max_steps = (valid_step_counts >= max_steps).all()
+            all_done = is_done.all()
+            if all_reach_max_steps or all_done:
+                break
+            
+            ######## 状态回溯 ########################################################################3
+            # ========== 关键优化：仅回溯需要回退的轨迹对应的环境 ==========
+            for i in range(batch_size):
+                if need_rollback[i] and active_masks[i]:
+                    # 仅恢复当前轨迹的环境状态（而非全量）
+                    envs.load_state(i, prev_traj_env_states[i])
+
+            # new_obs = {
+            #     key: list(val) if val is not None else None
+            #     for key, val in next_obs.items()
+            # }
+            # for i in range(batch_size):
+            #     # 对需要回退 且 仍活跃的轨迹，恢复旧观测
+            #     if need_rollback[i] and active_masks[i]:
+            #         for key in new_obs.keys():  # 遍历obs的所有key: text/image/anchor
+            #             if new_obs[key] is not None:
+            #                 new_obs[key][i] = prev_obs[key][i]  # 恢复该轨迹的旧观测值
+            # # 替换为更新后的观测
+            # obs = new_obs
+            
+            # ========== 修复3：构建new_obs时使用深度拷贝 ==========
+            new_obs = copy.deepcopy(next_obs)  # 深度拷贝next_obs，避免引用问题
+            
+            # 回退逻辑：恢复需要回退轨迹的旧观测
+            for i in range(batch_size):
+                if need_rollback[i] and active_masks[i]:
+                    for key in new_obs.keys():
+                        if new_obs[key] is not None:
+                            # 针对不同数据类型的安全赋值
+                            if isinstance(new_obs[key], np.ndarray):
+                                new_obs[key][i] = prev_obs[key][i].copy()  # 数组拷贝
+                            elif isinstance(new_obs[key], list):
+                                new_obs[key][i] = copy.deepcopy(prev_obs[key][i])  # 列表深拷贝
+                            else:
+                                new_obs[key][i] = prev_obs[key][i]  # 基础类型直接赋值
+            
+            # 更新obs为新的、独立的观测数据
+            obs = new_obs
+            ################################################################################3
+
+        
+        success: Dict[str, np.ndarray] = envs.success_evaluator(
+                    total_infos=total_infos,
+                    total_batch_list=total_batch_list,
+                    episode_rewards=episode_rewards, 
+                    episode_lengths=episode_lengths,
+                    )
+        
+        # return total_batch_list, episode_rewards, episode_lengths, success, traj_uid, tool_callings, retrieved_doc_ids, episode_rollback_count
+        return total_batch_list, episode_rewards, episode_lengths, success, traj_uid, tool_callings, episode_rollback_count
+    
+
     def dynamic_multi_turn_loop(
             self,
             gen_batch: DataProto, 
@@ -502,28 +790,52 @@ class TrajectoryCollector:
         """
         if is_train:
             gen_batch = gen_batch.repeat(repeat_times=self.config.env.rollout.n, interleave=True)
-            
-        # Initial observations from the environment
-        if self.config.algorithm.filter_groups.enable and is_train:
-            # Dynamic Sampling (for DAPO and Dynamic GiGPO)
-            total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings = \
-                self.dynamic_multi_turn_loop(
-                gen_batch=gen_batch,
-                actor_rollout_wg=actor_rollout_wg,
-                envs=envs,
-            )
-        else:
-            # Vanilla Sampling   
-            total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings = \
-                self.vanilla_multi_turn_loop(
-                gen_batch=gen_batch,
-                actor_rollout_wg=actor_rollout_wg,
-                envs=envs,
-            )
+
+        total_episode_rollback_count = None
+        # 使用retrieval reward
+        if self.config.algorithm.get('use_multihop_dataset', False):
+            # 如果当前是训练过程，且启动了回退模式
+            if is_train and self.config.algorithm.get('use_Rollback', False):
+                # total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings, retrieved_doc_ids, total_episode_rollback_count = \
+                total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings, total_episode_rollback_count = \
+                        self.vanilla_multi_turn_loop_use_Rollback(
+                        gen_batch=gen_batch,
+                        actor_rollout_wg=actor_rollout_wg,
+                        envs=envs,
+                    )
+            else:
+                # Vanilla Sampling   
+                # total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings, retrieved_doc_ids = \
+                total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings = \
+                    self.vanilla_multi_turn_loop(
+                    gen_batch=gen_batch,
+                    actor_rollout_wg=actor_rollout_wg,
+                    envs=envs,
+                )
+        else: # 原有逻辑，不修改
+            # Initial observations from the environment
+            if self.config.algorithm.filter_groups.enable and is_train:
+                # Dynamic Sampling (for DAPO and Dynamic GiGPO)
+                total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings = \
+                    self.dynamic_multi_turn_loop(
+                    gen_batch=gen_batch,
+                    actor_rollout_wg=actor_rollout_wg,
+                    envs=envs,
+                )
+            else:
+                # Vanilla Sampling   
+                # total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings, retrieved_doc_ids = \
+                total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings = \
+                    self.vanilla_multi_turn_loop(
+                    gen_batch=gen_batch,
+                    actor_rollout_wg=actor_rollout_wg,
+                    envs=envs,
+                )
         assert len(total_batch_list) == len(total_episode_rewards)
         assert len(total_batch_list) == len(total_episode_lengths)
         assert len(total_batch_list) == len(total_traj_uid)
         assert len(total_batch_list) == len(totoal_tool_callings)
+        # assert len(total_batch_list) == len(retrieved_doc_ids)
         
 
         # Create trajectory data
@@ -534,6 +846,9 @@ class TrajectoryCollector:
             success=total_success,
             traj_uid=total_traj_uid,
             tool_callings=totoal_tool_callings,
+            # retrieved_doc_ids=retrieved_doc_ids,
+            episode_rollback_count=total_episode_rollback_count,
+            is_train=is_train
         )
         
         return gen_batch_output

@@ -223,6 +223,191 @@ def apply_invalid_action_penalty(data: DataProto, invalid_action_penalty_coef=fl
     metrics = {'episode/valid_action_ratio': valid_action_ratio}
     return data, metrics
 
+
+def apply_invalid_action_penalty_type2(data: DataProto):
+    reward_tensor = data.batch['token_level_scores']
+    if 'step_rewards' in data.batch.keys():
+        step_rewards = data.batch['step_rewards']
+    for i in range(len(data)):
+        data_item = data[i]  # DataProtoItem
+
+        prompt_ids = data_item.batch['prompts']
+
+        prompt_length = prompt_ids.shape[-1]
+
+        valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()
+
+        # action_valids = data_item.non_tensor_batch['is_action_valid'].astype(np.float32)
+        # action_invalids = torch.tensor(1 - action_valids, dtype=torch.float32, device=prompt_ids.device).squeeze(0)
+        # # invalid action penalty
+        # # assert reward_tensor[i, valid_response_length - 1] != 0.0, f'i={i}'
+        # reward_tensor[i, valid_response_length - 1] -= invalid_action_penalty_coef * action_invalids
+
+        # if 'step_rewards' in data.batch.keys():
+        #     step_rewards[i] -= invalid_action_penalty_coef * action_invalids
+            
+        action_valids = data_item.non_tensor_batch['is_action_valid'].astype(np.float32)
+        # 格式错误, 置-1.0
+        if action_valids == 0.0:
+            reward_tensor[i, valid_response_length - 1] = torch.tensor(-1.0, dtype=torch.float32, device=prompt_ids.device).squeeze(0)
+            if 'step_rewards' in data.batch.keys():
+                step_rewards[i] = torch.tensor(-1.0, dtype=torch.float32, device=prompt_ids.device).squeeze(0)
+        
+    valid_action_ratio = np.mean(data.non_tensor_batch['is_action_valid'].astype(np.float32)).item()
+    metrics = {'episode/valid_action_ratio': valid_action_ratio}
+    return data, metrics
+
+# 不更新，将废弃
+def apply_retrieval_reward_type1(data: DataProto, target_retrieved_doc_ids, retrieval_reward_coef):
+    reward_tensor = data.batch['token_level_scores']
+    retrieval_reward_all = []
+    success_retrieval_ratio_all = []
+    search_action_validity_all = []
+    topk = 3
+    for i in range(len(data)):
+        data_item = data[i]  # DataProtoItem
+        
+        # # 现有方法，会出现answer动作奖励低于search动作，可能有害
+        # # 错误样本，计算召回奖励；正确样本不计算召回奖励
+        # assert data_item.non_tensor_batch['episode_rewards'] in [0.0, 1.0]
+        # if data_item.non_tensor_batch['episode_rewards'] == 1.0:
+        #     continue
+        
+        prompt_ids = data_item.batch['prompts']
+        prompt_length = prompt_ids.shape[-1]
+        valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()
+
+        raw_prompt = data_item.non_tensor_batch['raw_prompt'][0]['content']
+        if "Prior to this step, you have already taken" in raw_prompt:
+            question = raw_prompt.split("\nYou are an expert agent tasked with answering the given question step-by-step.\nYour question: ")[-1].split("\n\nPrior to this step, you have already taken")[0]
+            index = int(raw_prompt.split("Prior to this step, you have already taken ")[-1].split(" step(s).")[0])
+        else:
+            question = raw_prompt.split("\nYou are an expert agent tasked with answering the given question step-by-step.\nYour question: ")[-1].split("\n\nNow it's your turn")[0]
+            index = 0
+        
+        target_retrieved_doc_ids_steps = []
+        for step in target_retrieved_doc_ids[question]:
+            target_retrieved_doc_ids_steps.extend(step['target_documents_id'])
+            
+        retrieved_doc_ids_step = data_item.non_tensor_batch['retrieved_doc_ids'][index]
+        
+        if retrieved_doc_ids_step:
+            intersection = list(set(target_retrieved_doc_ids_steps) & set(retrieved_doc_ids_step))
+            num_valid_retrieved_doc_ids_step = len(intersection)
+            
+            search_action_validity = num_valid_retrieved_doc_ids_step != 0
+            success_retrieval_ratio = num_valid_retrieved_doc_ids_step / topk
+            
+            retrieval_reward = success_retrieval_ratio
+            retrieval_reward_tensor = torch.tensor(success_retrieval_ratio * retrieval_reward_coef, dtype=torch.float32, device=prompt_ids.device).squeeze(0)
+                    
+            reward_tensor[i, valid_response_length - 1] += retrieval_reward_tensor
+        else:
+            retrieval_reward = None
+            success_retrieval_ratio = None
+            search_action_validity = None
+            
+        retrieval_reward_all.append(retrieval_reward)
+        success_retrieval_ratio_all.append(success_retrieval_ratio)
+        search_action_validity_all.append(search_action_validity)
+
+    data.non_tensor_batch['retrieval_reward'] = np.array(retrieval_reward_all)
+    data.non_tensor_batch['success_retrieval_ratio'] = np.array(success_retrieval_ratio_all)
+    data.non_tensor_batch['search_action_validity'] = np.array(search_action_validity_all)
+    
+    return data
+
+
+def apply_retrieval_reward_type2(data: DataProto, target_retrieved_doc_ids, config):
+    retrieval_reward_all = []
+    success_retrieval_ratio_all = []
+    search_action_validity_all = []
+    topk = 3
+    num_traj = len(set(data.non_tensor_batch['traj_uid']))
+    for traj_id in range(num_traj):
+        ############ 排序data_traj ########################################################################################3
+        data_traj = data[data.non_tensor_batch['index'] == traj_id]
+
+        raw_prompt_traj = [data_traj.non_tensor_batch['raw_prompt'][i][0]['content'] for i in range(len(data_traj))]
+        index_question_traj = {}
+        for i, raw_prompt in enumerate(raw_prompt_traj):
+            if "Prior to this step, you have already taken" in raw_prompt:
+                question = raw_prompt.split("\nYou are an expert agent tasked with answering the given question step-by-step.\nYour question: ")[-1].split("\n\nPrior to this step, you have already taken")[0]
+                index = int(raw_prompt.split("Prior to this step, you have already taken ")[-1].split(" step(s).")[0])
+            else:
+                question = raw_prompt.split("\nYou are an expert agent tasked with answering the given question step-by-step.\nYour question: ")[-1].split("\n\nNow it's your turn")[0]
+                index = 0
+            index_question_traj[index] = index_question_traj.get(index, []) + [data_traj[i]]
+            
+        # 1. 按字典的键（key）升序排序（默认）
+        index_question_traj_sorted = dict(sorted(index_question_traj.items()))
+        data_traj_sorted = index_question_traj_sorted.values()
+        ####################################################################################################3
+        
+        target_retrieved_doc_ids_steps_set = set()
+        for step in target_retrieved_doc_ids[question]:
+            target_retrieved_doc_ids_steps_set.update(step['target_documents_id'])
+        
+        # retrieved_doc_ids_steps = data_traj.non_tensor_batch['retrieved_doc_ids'][0] # 同一轨迹的所有样本都是一样的
+        
+        # 最后一步骤如果还是search，是没有检索文档的，后续考虑添加
+        history_retrieved_doc_ids_steps = set()
+        for i, data_item_list in enumerate(data_traj_sorted):
+            to_save_as_history_retrieved_doc_ids_step = None
+            for data_item in data_item_list:
+                # retrieved_doc_ids_step = retrieved_doc_ids_steps[i]
+                retrieved_doc_ids_step = data_item.non_tensor_batch['retrieved_doc_ids']
+                if retrieved_doc_ids_step:
+                    prompt_ids = data_item.batch['prompts']
+                    prompt_length = prompt_ids.shape[-1]
+                    valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()  
+                    
+                    # 使用回溯步骤
+                    if config.algorithm.use_RollBacked_Step:
+                        # 主分支按正常流程计算
+                        if data_item.non_tensor_batch['is_rollback_step'] == False:
+                            # 计算与目标文档的交集（排除历史已检索的文档）
+                            to_save_as_history_retrieved_doc_ids_step = retrieved_doc_ids_step
+                            new_retrieved_doc_ids_step_set = set(retrieved_doc_ids_step) - history_retrieved_doc_ids_steps
+                            intersection = target_retrieved_doc_ids_steps_set & new_retrieved_doc_ids_step_set
+                            num_valid_retrieved_doc_ids_step = len(intersection)
+                        # 回退步骤，是无效步骤，惩罚
+                        else:
+                            num_valid_retrieved_doc_ids_step = 0 # 回滚步骤，是无效步骤，惩罚
+                    # 不使用回溯步骤
+                    else:
+                        to_save_as_history_retrieved_doc_ids_step = retrieved_doc_ids_step
+                        new_retrieved_doc_ids_step_set = set(retrieved_doc_ids_step) - history_retrieved_doc_ids_steps
+                        intersection = target_retrieved_doc_ids_steps_set & new_retrieved_doc_ids_step_set
+                        num_valid_retrieved_doc_ids_step = len(intersection)
+                        
+                    search_action_validity = num_valid_retrieved_doc_ids_step != 0
+                    success_retrieval_ratio = num_valid_retrieved_doc_ids_step / topk
+                    
+                    retrieval_reward = num_valid_retrieved_doc_ids_step / topk if num_valid_retrieved_doc_ids_step > 0 else -1.0
+                    retrieval_reward_tensor = torch.tensor(retrieval_reward * config.algorithm.retrieval_reward_coef, dtype=torch.float32, device=prompt_ids.device).squeeze(0)
+                    data_item.batch['token_level_scores'][valid_response_length - 1] += retrieval_reward_tensor
+
+                    
+                else: # retrieved_doc_ids_step == None 情况1 格式错误（交给格式惩罚处理，直接置为-1.0）；情况2 answer（无奖惩）。不操作
+                    retrieval_reward = None
+                    success_retrieval_ratio = None
+                    search_action_validity = None
+                
+                retrieval_reward_all.append(retrieval_reward)
+                success_retrieval_ratio_all.append(success_retrieval_ratio)
+                search_action_validity_all.append(search_action_validity)
+            # 注意每个步骤包含一个list的经验，可能是回退步骤、可能是被复制的步骤，只保存原始经验的检索结果作为历史已检索文档（每个步骤保留一次）
+            if to_save_as_history_retrieved_doc_ids_step:
+                history_retrieved_doc_ids_steps.update(to_save_as_history_retrieved_doc_ids_step)
+    
+    
+    data.non_tensor_batch['retrieval_reward'] = np.array(retrieval_reward_all)
+    data.non_tensor_batch['success_retrieval_ratio'] = np.array(success_retrieval_ratio_all)
+    data.non_tensor_batch['search_action_validity'] = np.array(search_action_validity_all)
+    
+    return data
+    
 def compute_response_mask(data: DataProto):
     """Compute the attention mask for the response part of the sequence.
 
@@ -1061,11 +1246,19 @@ class RayPPOTrainer:
                     non_tensor_batch_keys_to_pop.append("tools_kwargs")
                 if "env_kwargs" in batch.non_tensor_batch:
                     non_tensor_batch_keys_to_pop.append("env_kwargs")
+                if "extra_info" in batch.non_tensor_batch:
+                    non_tensor_batch_keys_to_pop.append("extra_info")
                 gen_batch = batch.pop(
                     batch_keys=batch_keys_to_pop,
                     non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
                 )
-
+                
+                if self.config.algorithm.get('use_multihop_dataset', False):
+                    target_retrieved_doc_ids = {}
+                    for i in range(len(gen_batch)):
+                        raw_prompt = gen_batch.non_tensor_batch['raw_prompt'][i][1]['content']
+                        target_retrieved_doc_ids[raw_prompt] = gen_batch.non_tensor_batch["extra_info"][i]["steps"]
+                    
                 is_last_step = self.global_steps >= self.total_training_steps
 
                 with _timer("step", timing_raw):
@@ -1200,11 +1393,20 @@ class RayPPOTrainer:
                         if reward_extra_infos_dict:
                             batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
 
+                        ####### 检索奖励 ##################################################################
+                        if self.config.algorithm.get('use_multihop_dataset', False):
+                            if self.config.algorithm.retrieval_reward_type == 1:                            
+                                batch = apply_retrieval_reward_type1(batch, target_retrieved_doc_ids, retrieval_reward_coef=self.config.algorithm.retrieval_reward_coef)
+                            if self.config.algorithm.retrieval_reward_type == 2:                            
+                                batch = apply_retrieval_reward_type2(batch, target_retrieved_doc_ids, config=self.config)
+                        #########################################################################
+
                         # compute rewards. apply_invalid_action_penalty if available
                         if self.config.actor_rollout_ref.actor.get('use_invalid_action_penalty', True):
-                            batch, invalid_metrics = apply_invalid_action_penalty(batch,
-                                                                                  invalid_action_penalty_coef=self.config.actor_rollout_ref.actor.invalid_action_penalty_coef,
-                                                                                  )
+                            if self.config.actor_rollout_ref.actor.use_invalid_action_penalty_type == 1:                            
+                                batch, invalid_metrics = apply_invalid_action_penalty(batch, invalid_action_penalty_coef=self.config.actor_rollout_ref.actor.invalid_action_penalty_coef)
+                            if self.config.actor_rollout_ref.actor.use_invalid_action_penalty_type == 2:                            
+                                batch, invalid_metrics = apply_invalid_action_penalty_type2(batch) # 格式错误，置-1
                             metrics.update(invalid_metrics)
 
                         # compute rewards. apply_kl_penalty if available

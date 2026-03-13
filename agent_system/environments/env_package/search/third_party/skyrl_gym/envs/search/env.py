@@ -5,6 +5,7 @@ from agent_system.environments.env_package.search.third_party.skyrl_gym.tools im
 import re
 from typing import Dict, Optional, List
 from omegaconf import DictConfig
+from copy import deepcopy 
 
 
 class SearchEnv(BaseTextEnv):
@@ -69,11 +70,11 @@ class SearchEnv(BaseTextEnv):
             return action
 
     def _execute_tool(self, tool_group_name: str, tool_name: str, tool_input: Any) -> str:
-        tool_output = super()._execute_tool(tool_group_name, tool_name, tool_input)
+        tool_output, metadata = super()._execute_tool(tool_group_name, tool_name, tool_input)
         if len(tool_output) > 0:
-            return "\n<information>" + tool_output + "</information>\n"
+            return "\n<information>" + tool_output + "</information>\n", metadata
         else:
-            return None
+            return None, None
 
     def step(self, action: str) -> BaseTextEnvStepOutput:
         self.turns += 1
@@ -91,12 +92,12 @@ class SearchEnv(BaseTextEnv):
 
         if done:
             return BaseTextEnvStepOutput(
-                observations=[], reward=reward, done=done, metadata={"data_source": self.data_source, "tool_calling": False}, postprocessed_action=action
+                observations=[], reward=reward, done=done, metadata={"data_source": self.data_source, "tool_calling": False, "retrieved_doc_ids": None}, postprocessed_action=action
             )
 
         try:
             query = self._parse_action(action)
-            observation = self._execute_tool("SearchToolGroup", "search", query)
+            observation, metadata = self._execute_tool("SearchToolGroup", "search", query)
         except Exception as e:
             error = str(e)
             observation = None
@@ -117,6 +118,7 @@ class SearchEnv(BaseTextEnv):
             "tool_name": "search",
             "tool_input": query,
             "data_source": self.data_source,
+            "retrieved_doc_ids": metadata['retrieved_doc_ids'] if metadata else None,
         }
 
         # Update chat history
@@ -130,3 +132,24 @@ class SearchEnv(BaseTextEnv):
             metadata=info,
             postprocessed_action=action,
         )
+    # ========== 新增：保存SearchEnv状态 ==========
+    def save_state(self) -> Dict[str, Any]:
+        """保存当前环境的完整状态"""
+        return {
+            "ground_truth": self.ground_truth,
+            "max_turns": self.max_turns,
+            "data_source": self.data_source,
+            "chat_history": deepcopy(self.chat_history),
+            "done": self.done,
+            "turns": self.turns,
+        }
+
+    # ========== 新增：恢复SearchEnv状态 ==========
+    def load_state(self, state: Dict[str, Any]) -> None:
+        """从保存的状态恢复环境"""
+        self.ground_truth = state["ground_truth"]
+        self.max_turns = state["max_turns"]
+        self.data_source = state["data_source"]
+        self.chat_history = state["chat_history"]
+        self.done = state["done"]
+        self.turns = state["turns"]

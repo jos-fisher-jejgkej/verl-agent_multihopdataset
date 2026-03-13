@@ -186,6 +186,18 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> Dict[str,
         #     batch.non_tensor_batch["tool_callings"][unique_idx].min().item(),
         **({f"episode/{k}": v[0].item() for k, v in batch.non_tensor_batch.items() if "success_rate" in k}),
     }
+    if "episode_rollback_count" in batch.non_tensor_batch:
+        metrics["episode/rollback_count"] = batch.non_tensor_batch["episode_rollback_count"][unique_idx].mean().item()
+    if "retrieval_reward" in batch.non_tensor_batch:
+        retrieval_reward = batch.non_tensor_batch["retrieval_reward"][unique_idx]
+        metrics["episode/retrieval_reward"] = retrieval_reward[retrieval_reward != None].mean().item()
+    if "success_retrieval_ratio" in batch.non_tensor_batch:
+        success_retrieval_ratio = batch.non_tensor_batch["success_retrieval_ratio"][unique_idx]
+        metrics["episode/success_retrieval_ratio"] = success_retrieval_ratio[success_retrieval_ratio != None].mean().item()
+    if "search_action_validity" in batch.non_tensor_batch:
+        search_action_validity = batch.non_tensor_batch["search_action_validity"][unique_idx]
+        metrics["episode/search_action_validity"] = search_action_validity[search_action_validity != None].mean().item()
+      
     return metrics
 
 

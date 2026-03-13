@@ -23,6 +23,7 @@ from agent_system.environments.prompts import *
 from agent_system.environments.base import EnvironmentManagerBase, to_numpy
 from agent_system.memory import SimpleMemory, SearchMemory
 from omegaconf import OmegaConf
+from copy import deepcopy 
 
 def parse_gamefile(infos):
     gamefile = []
@@ -129,6 +130,40 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
                 success[f"{data_source}_success_rate"].append(won_value)
                 return  # Exit after finding the first active mask
             
+
+    # ========== 优化：保存单条指定轨迹的状态 ==========
+    def save_state(self, idx: int) -> Dict[str, Any]:
+        """
+        仅保存指定轨迹索引的环境状态
+        Args:
+            idx: 轨迹/环境实例的索引
+        Returns:
+            单条轨迹对应的状态字典
+        """
+        return {
+            # 保存该轨迹的memory数据
+            "memory_data": deepcopy(self.memory._data[idx]),
+            # 保存该轨迹对应的底层SearchEnv状态
+            "sub_env_state": self.envs.save_state(idx),
+            # 保存该轨迹的task信息
+            "task": deepcopy(self.tasks[idx]) if idx < len(self.tasks) else None
+        }
+
+    # ========== 优化：恢复单条指定轨迹的状态 ==========
+    def load_state(self, idx: int, state: Dict[str, Any]) -> None:
+        """
+        仅恢复指定轨迹索引的环境状态
+        Args:
+            idx: 轨迹/环境实例的索引
+            state: 单条轨迹的状态字典（来自save_trajectory_state）
+        """
+        # 恢复该轨迹的memory数据
+        self.memory._data[idx] = state["memory_data"]
+        # 恢复该轨迹对应的底层SearchEnv
+        self.envs.load_state(idx, state["sub_env_state"])
+        # 恢复该轨迹的task信息
+        if idx < len(self.tasks) and state["task"] is not None:
+            self.tasks[idx] = state["task"]
 
 class AlfWorldEnvironmentManager(EnvironmentManagerBase):
     def __init__(self, envs, projection_f, config):

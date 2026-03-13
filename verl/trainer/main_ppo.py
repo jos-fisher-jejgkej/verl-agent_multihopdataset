@@ -56,7 +56,7 @@ class TaskRunner:
     def run(self, config):
         # print initial config
         from pprint import pprint
-
+        breakpoint()
         from omegaconf import OmegaConf
 
         from verl.utils.fs import copy_to_local

@@ -159,6 +159,21 @@ class SearchMultiProcessEnv(gym.Env):
         self.close()
 
 
+    # ========== 优化：保存指定子环境状态 ==========
+    def save_state(self, idx: int) -> Dict[str, Any]:
+        """仅保存指定索引的子SearchEnv状态"""
+        if idx < 0 or idx >= len(self.envs):
+            raise IndexError(f"Env index {idx} out of range (0-{len(self.envs)-1})")
+        return self.envs[idx].save_state()
+
+    # ========== 优化：恢复指定子环境状态 ==========
+    def load_state(self, idx: int, state: Dict[str, Any]) -> None:
+        """仅恢复指定索引的子SearchEnv状态"""
+        if idx < 0 or idx >= len(self.envs):
+            raise IndexError(f"Env index {idx} out of range (0-{len(self.envs)-1})")
+        self.envs[idx].load_state(state)
+
+
 def build_search_envs(
     seed: int = 0,
     env_num: int = 1,

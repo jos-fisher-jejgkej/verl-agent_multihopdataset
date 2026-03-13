@@ -23,6 +23,12 @@ python scripts/model_merger.py merge \
     --target_dir /path/to/merged_hf_model
 ```
 
+python scripts/model_merger.py merge \
+    --backend fsdp \
+    --local_dir /mnt/project/fsh/verl-agent_multihopdataset/checkpoints/verl_agent_search_multihopdataset/4_grpo_run_search-qwen2.5-3b-instruct_train_data_size_64_ppo_mini_batch_size_128_multihopdataset_retrieval_reward_coef05/global_step_100/actor \
+    --target_dir /mnt/project/fsh/verl-agent_multihopdataset/checkpoints/verl_agent_search_multihopdataset/4_grpo_run_search-qwen2.5-3b-instruct_train_data_size_64_ppo_mini_batch_size_128_multihopdataset_retrieval_reward_coef05/global_step_100/actor_hf
+    
+    
 To merge Megatron checkpoints:
 ```sh
 python scripts/model_merger.py merge \

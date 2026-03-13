@@ -131,10 +131,12 @@ def call_search_api(
 
 def _passages2string(retrieval_result):
     format_reference = ""
+    retrieved_doc_ids = []
     for idx, doc_item in enumerate(retrieval_result):
         content = doc_item["document"]["contents"].strip()
         format_reference += f"Doc {idx+1}: {content}\n"
-    return format_reference
+        retrieved_doc_ids.append(doc_item["document"]["id"])
+    return format_reference, retrieved_doc_ids
 
 
 class SearchToolGroup(ToolGroup):
@@ -182,7 +184,7 @@ class SearchToolGroup(ToolGroup):
     def search(self, query: str) -> str:
         # NOTE(shu): add warning messages here?
         if query is None:
-            return ""
+            return "", None
 
         query = query.strip()
 
@@ -224,7 +226,7 @@ class SearchToolGroup(ToolGroup):
                     pretty_results = []
                     total_results = 0
                     for retrieval in raw_results:
-                        formatted = _passages2string(retrieval)
+                        formatted, retrieved_doc_ids = _passages2string(retrieval)
                         pretty_results.append(formatted)
                         total_results += len(retrieval) if isinstance(retrieval, list) else 1
 
@@ -233,6 +235,7 @@ class SearchToolGroup(ToolGroup):
                     metadata["status"] = "success"
                     metadata["total_results"] = total_results
                     metadata["formatted_result"] = final_result
+                    metadata["retrieved_doc_ids"] = retrieved_doc_ids
                     if self.log_requests:
                         logger.info(f"Batch search: Successful, got {total_results} total results")
                 else:
@@ -251,4 +254,4 @@ class SearchToolGroup(ToolGroup):
             result_text = json.dumps({"result": "Unknown API state (no response and no error message)."})
             logger.error("Batch search: Unknown API state.")
 
-        return result_text
+        return result_text, metadata

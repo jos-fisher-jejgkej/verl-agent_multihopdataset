@@ -98,42 +98,62 @@ def main():
 
     processed_files = []
 
+    # # Download and process files using temporary directory
+    # with tempfile.TemporaryDirectory() as tmp_download_dir:
+    #     for split in ["train", "test"]:
+    #         parquet_filename = f"{split}.parquet"
+    #         logger.info(f"Processing {split} split...")
+
+    #         try:
+    #             # Download Parquet file from HuggingFace
+    #             logger.info(f"Downloading {parquet_filename} from {args.hf_repo_id}")
+    #             local_parquet_filepath = hf_hub_download(
+    #                 repo_id=args.hf_repo_id,
+    #                 filename=parquet_filename,
+    #                 repo_type="dataset",
+    #                 local_dir=tmp_download_dir,
+    #                 local_dir_use_symlinks=False,
+    #             )
+
+    #             # Load and process Parquet file
+    #             df_raw = pd.read_parquet(local_parquet_filepath)
+    #             logger.info(f"Loaded {len(df_raw)} rows from {parquet_filename}")
+
+    #             def apply_process_row(row, split_name=split):
+    #                 return process_single_row(row, current_split_name=split_name, row_index=row.name)
+
+    #             df_processed = df_raw.apply(apply_process_row, axis=1)
+
+    #             # Save processed DataFrame
+    #             output_file_path = os.path.join(local_save_dir, f"{split}.parquet")
+    #             df_processed.to_parquet(output_file_path, index=False)
+    #             logger.info(f"Saved {len(df_processed)} processed rows to {output_file_path}")
+    #             processed_files.append(output_file_path)
+
+    #         except EntryNotFoundError:
+    #             logger.warning(f"{parquet_filename} not found in repository {args.hf_repo_id}")
+    #         except Exception as e:
+    #             logger.error(f"Error processing {split} split: {e}")
+
+
     # Download and process files using temporary directory
     with tempfile.TemporaryDirectory() as tmp_download_dir:
-        for split in ["train", "test"]:
-            parquet_filename = f"{split}.parquet"
-            logger.info(f"Processing {split} split...")
+        local_save_dir = "/mnt/project/fsh/verl-agent_multihopdataset/_data/multihopdataset/musique/"
+        local_parquet_filepath = "/mnt/project/fsh/verl-agent_multihopdataset/_data/multihopdataset/musique/train.parquet"
+        df_raw = pd.read_parquet(local_parquet_filepath)
 
-            try:
-                # Download Parquet file from HuggingFace
-                logger.info(f"Downloading {parquet_filename} from {args.hf_repo_id}")
-                local_parquet_filepath = hf_hub_download(
-                    repo_id=args.hf_repo_id,
-                    filename=parquet_filename,
-                    repo_type="dataset",
-                    local_dir=tmp_download_dir,
-                    local_dir_use_symlinks=False,
-                )
+        split = "train"
+        def apply_process_row(row, split_name=split):
+            return process_single_row(row, current_split_name=split_name, row_index=row.name)
 
-                # Load and process Parquet file
-                df_raw = pd.read_parquet(local_parquet_filepath)
-                logger.info(f"Loaded {len(df_raw)} rows from {parquet_filename}")
+        df_processed = df_raw.apply(apply_process_row, axis=1)
 
-                def apply_process_row(row, split_name=split):
-                    return process_single_row(row, current_split_name=split_name, row_index=row.name)
+        # Save processed DataFrame
+        output_file_path = os.path.join(local_save_dir, f"train_musique.parquet")
+        df_processed.to_parquet(output_file_path, index=False)
+        logger.info(f"Saved {len(df_processed)} processed rows to {output_file_path}")
+        processed_files.append(output_file_path)
 
-                df_processed = df_raw.apply(apply_process_row, axis=1)
-
-                # Save processed DataFrame
-                output_file_path = os.path.join(local_save_dir, f"{split}.parquet")
-                df_processed.to_parquet(output_file_path, index=False)
-                logger.info(f"Saved {len(df_processed)} processed rows to {output_file_path}")
-                processed_files.append(output_file_path)
-
-            except EntryNotFoundError:
-                logger.warning(f"{parquet_filename} not found in repository {args.hf_repo_id}")
-            except Exception as e:
-                logger.error(f"Error processing {split} split: {e}")
 
     if not processed_files:
         logger.warning("No data was processed or saved")
