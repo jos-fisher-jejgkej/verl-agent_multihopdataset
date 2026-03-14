@@ -32,7 +32,7 @@ echo "Experiment Name: $EXPERIMENT_NAME"
 
 total_training_steps=100
 
-CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo \
+CUDA_VISIBLE_DEVICES=0,3 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
@@ -43,7 +43,7 @@ CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=False \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=/mnt/project/fsh/verl-agent_multihopdataset/checkpoints/verl_agent_search_multihopdataset/0_grpo_run_search-qwen2.5-3b-instruct_train_data_size_64_ppo_mini_batch_size_128/global_step_100/actor_hf \
+    actor_rollout_ref.model.path=/mnt/project/fsh/verl-agent/_model/Qwen2.5-0.5B-Instruct \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -74,7 +74,7 @@ CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo \
     env.max_steps=4 \
     env.rollout.n=$group_size \
     env.history_length=4 \
-    env.search.search_url='http://192.168.10.7:8000/retrieve' \
+    env.search.search_url='http://192.168.10.3:8123/retrieve' \
     trainer.critic_warmup=0 \
     trainer.logger=['console'] \
     trainer.project_name='verl_agent_search_multihopdataset' \
@@ -87,12 +87,14 @@ CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo \
     trainer.max_actor_ckpt_to_keep=3 \
     trainer.val_before_train=False \
     +algorithm.use_multihop_dataset=True \
-    +algorithm.retrieval_reward_type=2 \
+    +algorithm.retrieval_reward_type=3 \
     +algorithm.retrieval_reward_coef=1.0 \
     +algorithm.use_Rollback=False \
     +algorithm.Max_Rollback_Step=2 \
     +algorithm.use_RollBacked_Step=False \
 
+    # actor_rollout_ref.model.path=/mnt/project/fsh/verl-agent_multihopdataset/checkpoints/verl_agent_search_multihopdataset_0.5b/0.5b_0_grpo_run_search-qwen2.5-0.5b-instruct_train_data_size_64_ppo_mini_batch_size_128_step300/global_step_300/actor_hf \
+    # actor_rollout_ref.model.path=/mnt/project/fsh/verl-agent_multihopdataset/checkpoints/verl_agent_search_multihopdataset/0_grpo_run_search-qwen2.5-3b-instruct_train_data_size_64_ppo_mini_batch_size_128/global_step_100/actor_hf \
 
     # +algorithm.use_multihop_dataset=False \
     # +algorithm.retrieval_reward_type=2 \

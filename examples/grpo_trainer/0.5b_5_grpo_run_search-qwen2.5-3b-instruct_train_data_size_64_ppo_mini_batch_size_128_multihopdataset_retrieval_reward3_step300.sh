@@ -19,8 +19,7 @@ val_data_size=512
 group_size=5
 
 # 从脚本中处理后的文件不包含env_kwargs字段
-
-TRAIN_DATA="/mnt/project/fsh/verl-agent_multihopdataset/_data/multihopdataset/musique/train_musique.parquet"
+TRAIN_DATA="/mnt/project/fsh/verl-agent_multihopdataset/_data/multihopdataset/musique/train_musique_multihop_addllmjudge_truesample_searchresults_subquestionllmjudge_filt0.5_3.parquet"
 VAL_DATA="/mnt/project/fsh/verl-agent/_data/searchR1_processed_direct/test.parquet"
 
 # 获取当前 shell 脚本的 basename（不含路径）
@@ -40,7 +39,7 @@ CUDA_VISIBLE_DEVICES=0,3 python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=False \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=/mnt/project/fsh/verl-agent/_model/Qwen2.5-3B-Instruct \
+    actor_rollout_ref.model.path=/mnt/project/fsh/verl-agent/_model/Qwen2.5-0.5B-Instruct \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -63,7 +62,7 @@ CUDA_VISIBLE_DEVICES=0,3 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
-    +actor_rollout_ref.actor.use_invalid_action_penalty_type=1 \
+    +actor_rollout_ref.actor.use_invalid_action_penalty_type=2 \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.01 \
     algorithm.use_kl_in_reward=False \
     env.env_name=search \
@@ -82,14 +81,14 @@ CUDA_VISIBLE_DEVICES=0,3 python3 -m verl.trainer.main_ppo \
     trainer.test_freq=30 \
     trainer.save_freq=$total_training_steps \
     trainer.max_actor_ckpt_to_keep=3 \
-    trainer.val_before_train=False \
+    trainer.val_before_train=True \
     trainer.rollout_data_dir=./_log/$EXPERIMENT_NAME \
-    +algorithm.use_multihop_dataset=False \
-    +algorithm.retrieval_reward_type=2 \
+    +algorithm.use_multihop_dataset=True \
+    +algorithm.retrieval_reward_type=3 \
     +algorithm.retrieval_reward_coef=1.0 \
     +algorithm.use_Rollback=False \
     +algorithm.Max_Rollback_Step=2 \
     +algorithm.use_RollBacked_Step=False \
 
 
-    # env.search.search_url='http://192.168.10.7:8000/retrieve' \
+    
