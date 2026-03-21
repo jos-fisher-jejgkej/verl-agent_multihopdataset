@@ -7,28 +7,30 @@ mkdir -p $RAY_TMPDIR
 # export RAY_DEBUG_POST_MORTEM=1
 export WANDB_API_KEY=fb66753c54f510557f918cff15492604850941ee
 export SWANLAB_API_KEY=GkK8zRDsIytg2wAr7Wm6d
-# export RAY_DEBUG=0
+export RAY_DEBUG=0
 
 set -x
 
 ENGINE=${1:-vllm}
 
 # train_data_size=256
-train_data_size=8
+train_data_size=64
 val_data_size=512
 group_size=5
 
 # 从脚本中处理后的文件不包含env_kwargs字段
-TRAIN_DATA="/home/expand_disk/data_repository/fsh2/verl-agent_multihopdataset/_data/train_musique_multihop_addllmjudge_truesample_searchresults_subquestionllmjudge_filt0.5_3.parquet"
-VAL_DATA="/home/expand_disk/data_repository/fsh2/verl-agent_multihopdataset/_data/test.parquet"
+TRAIN_DATA="/home/expand_disk/data_repository/zxw2/Search-R1/_multihot_dataset_v2/nq_hotpotqa/all/train_nq_hotpotqa_qwen3max_em_correcttrajectory_rewrittenqueries_documentsllmjudge_effectivedocnum3_0_50000_11655.parquet"
+VAL_DATA="/home/expand_disk/data_repository/fsh2/verl-agent_multihopdataset/_data/test_nq_hotpotqa_musique_bamboogle.parquet"
+
+MODEL="/home/expand_disk/data_repository/zxw2/LlamaFactory/saves/Qwen2.5-0.5B-Instruct/lora/2_qwen2.5_0.5b-instruct_nq_hotpotqa_qwen3max_correct_only_multi_step_all_0_50000_28194/checkpoint-100_merged"
 
 # 获取当前 shell 脚本的 basename（不含路径）
 EXPERIMENT_NAME=$(basename "$0" .sh)  # 如果脚本是 train_grpo_search.sh，则 SCRIPT_NAME=train_grpo_search
 echo "Experiment Name: $EXPERIMENT_NAME"
 
-total_training_steps=100
+total_training_steps=300
 
-CUDA_VISIBLE_DEVICES=0,2 python3 -m verl.trainer.main_ppo \
+CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
@@ -39,12 +41,12 @@ CUDA_VISIBLE_DEVICES=0,2 python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=False \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=/home/expand_disk/data_repository/fsh2/verl-agent/_model/Qwen2.5-0.5B-Instruct \
+    actor_rollout_ref.model.path=${MODEL} \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -72,30 +74,21 @@ CUDA_VISIBLE_DEVICES=0,2 python3 -m verl.trainer.main_ppo \
     env.history_length=4 \
     env.search.search_url='http://192.168.10.3:8123/retrieve' \
     trainer.critic_warmup=0 \
-    trainer.logger=['console'] \
+    trainer.logger=['console','swanlab'] \
     trainer.project_name='verl_agent_search_multihopdataset_0.5b' \
     trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.n_gpus_per_node=2 \
+    trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.total_training_steps=$total_training_steps \
-    trainer.test_freq=10 \
+    trainer.test_freq=30 \
     trainer.save_freq=$total_training_steps \
     trainer.max_actor_ckpt_to_keep=3 \
-    trainer.val_before_train=False \
+    trainer.val_before_train=True \
+    trainer.rollout_data_dir=./_log/$EXPERIMENT_NAME \
     +algorithm.use_multihop_dataset=True \
     +algorithm.retrieval_reward_type=3 \
     +algorithm.retrieval_reward_coef=1.0 \
     +algorithm.use_Rollback=False \
     +algorithm.Max_Rollback_Step=2 \
     +algorithm.use_RollBacked_Step=False \
-
-    # actor_rollout_ref.model.path=/mnt/project/fsh/verl-agent_multihopdataset/checkpoints/verl_agent_search_multihopdataset_0.5b/0.5b_0_grpo_run_search-qwen2.5-0.5b-instruct_train_data_size_64_ppo_mini_batch_size_128_step300/global_step_300/actor_hf \
-    # actor_rollout_ref.model.path=/mnt/project/fsh/verl-agent_multihopdataset/checkpoints/verl_agent_search_multihopdataset/0_grpo_run_search-qwen2.5-3b-instruct_train_data_size_64_ppo_mini_batch_size_128/global_step_100/actor_hf \
-
-    # +algorithm.use_multihop_dataset=False \
-    # +algorithm.retrieval_reward_type=2 \
-    # +algorithm.retrieval_reward_coef=1.0 \
-    # +algorithm.use_Rollback=False \
-    # +algorithm.Max_Rollback_Step=2 \
-    # +algorithm.use_RollBacked_Step=False \
-
+    

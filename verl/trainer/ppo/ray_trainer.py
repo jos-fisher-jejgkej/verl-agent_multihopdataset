@@ -317,7 +317,6 @@ def apply_retrieval_reward_type1(data: DataProto, target_retrieved_doc_ids, retr
     
     return data
 
-
 def apply_retrieval_reward_type2(data: DataProto, target_retrieved_doc_ids, config):
     retrieval_reward_all = []
     success_retrieval_ratio_all = []
@@ -409,11 +408,9 @@ def apply_retrieval_reward_type2(data: DataProto, target_retrieved_doc_ids, conf
     return data
 
 def apply_retrieval_reward_type3(data: DataProto, target_retrieved_doc_ids, config):
-    retrieval_reward_all = []
-    success_retrieval_ratio_all = []
-    search_action_validity_all = []
     topk = 3
     num_traj = len(set(data.non_tensor_batch['traj_uid']))
+    retrieval_reward_all = np.array([np.float32(0.0)] * len(data), dtype=object)
     for traj_id in range(num_traj):
         ############ 排序data_traj ########################################################################################3
         data_traj = data[data.non_tensor_batch['index'] == traj_id]
@@ -434,21 +431,25 @@ def apply_retrieval_reward_type3(data: DataProto, target_retrieved_doc_ids, conf
         data_traj_sorted = index_question_traj_sorted.values()
         ####################################################################################################3
         
-        target_retrieved_doc_ids_steps_set = set()
-        for step in target_retrieved_doc_ids[question]:
-            target_retrieved_doc_ids_steps_set.update(step['target_documents_id'])
+        if "nq_hotpotqa" in config.data.train_files:
+            target_retrieved_doc_ids_steps_set = set(target_retrieved_doc_ids[question])
+            if not target_retrieved_doc_ids_steps_set:
+                print(f"Warning: question '{question}' has no target retrieved doc ids")
+                exit(0)
+        else:
+            target_retrieved_doc_ids_steps_set = set()
+            for step in target_retrieved_doc_ids[question]:
+                target_retrieved_doc_ids_steps_set.update(step['target_documents_id'])
         
         # retrieved_doc_ids_steps = data_traj.non_tensor_batch['retrieved_doc_ids'][0] # 同一轨迹的所有样本都是一样的
         
         # 最后一步骤如果还是search，是没有检索文档的，后续考虑添加
         history_retrieved_doc_ids_steps = set()
         retrieval_reward = 0.0
+        invalid_search_action_penalty = -1 / len(index_question_traj_sorted.keys()) # 评估一条轨迹中有多少动作是无效的search动作
         for i, data_item_list in enumerate(data_traj_sorted):
             to_save_as_history_retrieved_doc_ids_step = None
-            ######### 先不考虑回溯 ##################################################################
-            # for data_item in data_item_list:
-            for data_item in [data_item_list[0]]:
-                # retrieved_doc_ids_step = retrieved_doc_ids_steps[i]
+            for i, data_item in enumerate(data_item_list):
                 retrieved_doc_ids_step = data_item.non_tensor_batch['retrieved_doc_ids']
                 if retrieved_doc_ids_step:
                     prompt_ids = data_item.batch['prompts']
@@ -479,23 +480,9 @@ def apply_retrieval_reward_type3(data: DataProto, target_retrieved_doc_ids, conf
                     new_retrieved_doc_ids_step_set = set(retrieved_doc_ids_step) - history_retrieved_doc_ids_steps
                     intersection = target_retrieved_doc_ids_steps_set & new_retrieved_doc_ids_step_set
                     num_valid_retrieved_doc_ids_step = len(intersection)
-                    ###########################################################################
-                    
-                    search_action_validity = num_valid_retrieved_doc_ids_step != 0
-                    success_retrieval_ratio = num_valid_retrieved_doc_ids_step / topk
-                    
-                    retrieval_reward += num_valid_retrieved_doc_ids_step / topk if num_valid_retrieved_doc_ids_step > 0 else -1.0
-                    # retrieval_reward_tensor = torch.tensor(retrieval_reward * config.algorithm.retrieval_reward_coef, dtype=torch.float32, device=prompt_ids.device).squeeze(0)
-                    # data_item.batch['token_level_scores'][valid_response_length - 1] += retrieval_reward_tensor
+                    if i == 0: # 存在复制的情况，所以每步只累计第一个step的retrieval_reward
+                        retrieval_reward += num_valid_retrieved_doc_ids_step / topk if num_valid_retrieved_doc_ids_step > 0 else invalid_search_action_penalty
 
-                else: # retrieved_doc_ids_step == None 情况1 格式错误（交给格式惩罚处理，直接置为-1.0）；情况2 answer（无奖惩）。不操作
-                    # retrieval_reward = None
-                    success_retrieval_ratio = None
-                    search_action_validity = None
-                
-                retrieval_reward_all.append(retrieval_reward)
-                success_retrieval_ratio_all.append(success_retrieval_ratio)
-                search_action_validity_all.append(search_action_validity)
             # 注意每个步骤包含一个list的经验，可能是回退步骤、可能是被复制的步骤，只保存原始经验的检索结果作为历史已检索文档（每个步骤保留一次）
             if to_save_as_history_retrieved_doc_ids_step:
                 history_retrieved_doc_ids_steps.update(to_save_as_history_retrieved_doc_ids_step)
@@ -507,14 +494,11 @@ def apply_retrieval_reward_type3(data: DataProto, target_retrieved_doc_ids, conf
                 valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()  
                 retrieval_reward_tensor = torch.tensor(retrieval_reward * config.algorithm.retrieval_reward_coef, dtype=torch.float32, device=prompt_ids.device).squeeze(0)
                 data_item.batch['token_level_scores'][valid_response_length - 1] += retrieval_reward_tensor
+                data_item.non_tensor_batch['retrieval_reward'] = np.array(retrieval_reward)
+        retrieval_reward_all[data.non_tensor_batch['index'] == traj_id] = np.float32(retrieval_reward)
     
-    
-    data.non_tensor_batch['retrieval_reward'] = np.array(retrieval_reward_all)
-    data.non_tensor_batch['success_retrieval_ratio'] = np.array(success_retrieval_ratio_all)
-    data.non_tensor_batch['search_action_validity'] = np.array(search_action_validity_all)
-    
+    data.non_tensor_batch['retrieval_reward'] = retrieval_reward_all
     return data
-
    
 def compute_response_mask(data: DataProto):
     """Compute the attention mask for the response part of the sequence.
@@ -1365,7 +1349,10 @@ class RayPPOTrainer:
                     target_retrieved_doc_ids = {}
                     for i in range(len(gen_batch)):
                         raw_prompt = gen_batch.non_tensor_batch['raw_prompt'][i][1]['content']
-                        target_retrieved_doc_ids[raw_prompt] = gen_batch.non_tensor_batch["extra_info"][i]["steps"]
+                        if "steps" in gen_batch.non_tensor_batch["extra_info"][i]:
+                            target_retrieved_doc_ids[raw_prompt] = gen_batch.non_tensor_batch["extra_info"][i]["steps"]
+                        if "target_retrieved_doc_ids" in gen_batch.non_tensor_batch["extra_info"][i]:
+                            target_retrieved_doc_ids[raw_prompt] = gen_batch.non_tensor_batch["extra_info"][i]["target_retrieved_doc_ids"]
                     
                 is_last_step = self.global_steps >= self.total_training_steps
 

@@ -19,16 +19,16 @@ val_data_size=512
 group_size=5
 
 # 从脚本中处理后的文件不包含env_kwargs字段
-TRAIN_DATA="/home/expand_disk/data_repository/fsh2/verl-agent_multihopdataset/_data/train_musique_multihop_addllmjudge_truesample_searchresults_subquestionllmjudge_filt0.5_3.parquet"
+TRAIN_DATA="/home/expand_disk/data_repository/zxw2/Search-R1/_multihot_dataset_v2/nq_hotpotqa/v1_0_10000/train_nq_hotpotqa_qwen3max_em_correcttrajectory_rewrittenqueries_documentsllmjudge_effectivedocnum3.parquet"
 VAL_DATA="/home/expand_disk/data_repository/fsh2/verl-agent_multihopdataset/_data/test.parquet"
 
 # 获取当前 shell 脚本的 basename（不含路径）
 EXPERIMENT_NAME=$(basename "$0" .sh)  # 如果脚本是 train_grpo_search.sh，则 SCRIPT_NAME=train_grpo_search
 echo "Experiment Name: $EXPERIMENT_NAME"
 
-total_training_steps=100
+total_training_steps=300
 
-CUDA_VISIBLE_DEVICES=0,2 python3 -m verl.trainer.main_ppo \
+CUDA_VISIBLE_DEVICES=2 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
@@ -44,7 +44,7 @@ CUDA_VISIBLE_DEVICES=0,2 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=8 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -75,10 +75,10 @@ CUDA_VISIBLE_DEVICES=0,2 python3 -m verl.trainer.main_ppo \
     trainer.logger=['console'] \
     trainer.project_name='verl_agent_search_multihopdataset_0.5b' \
     trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.n_gpus_per_node=2 \
+    trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.total_training_steps=$total_training_steps \
-    trainer.test_freq=10 \
+    trainer.test_freq=30 \
     trainer.save_freq=$total_training_steps \
     trainer.max_actor_ckpt_to_keep=3 \
     trainer.val_before_train=False \

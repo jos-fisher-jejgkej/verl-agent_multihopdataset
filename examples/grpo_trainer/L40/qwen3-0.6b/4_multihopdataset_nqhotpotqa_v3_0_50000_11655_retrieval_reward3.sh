@@ -1,6 +1,6 @@
 # 1. 指定 Ray 临时目录
 # 建议选择空间充足的分区，比如 /mnt/project 下新建 ray_tmp 目录
-export RAY_TMPDIR="/mnt/project/fsh/ray_tmp"
+export RAY_TMPDIR="/tmp/ray"
 # 确保目录存在，不存在则创建
 mkdir -p $RAY_TMPDIR
 
@@ -19,8 +19,8 @@ val_data_size=512
 group_size=5
 
 # 从脚本中处理后的文件不包含env_kwargs字段
-TRAIN_DATA="/mnt/project/fsh/verl-agent_multihopdataset/_data/multihopdataset/musique/train_musique_multihop_addllmjudge_truesample_searchresults_subquestionllmjudge_filt0.5_3.parquet"
-VAL_DATA="/mnt/project/fsh/verl-agent/_data/searchR1_processed_direct/test.parquet"
+TRAIN_DATA="/home/expand_disk/data_repository/zxw2/Search-R1/_multihot_dataset_v2/nq_hotpotqa/all/train_nq_hotpotqa_qwen3max_em_correcttrajectory_rewrittenqueries_documentsllmjudge_effectivedocnum3_0_50000_11655.parquet"
+VAL_DATA="/home/expand_disk/data_repository/fsh2/verl-agent_multihopdataset/_data/test_nq_hotpotqa_musique_bamboogle.parquet"
 
 # 获取当前 shell 脚本的 basename（不含路径）
 EXPERIMENT_NAME=$(basename "$0" .sh)  # 如果脚本是 train_grpo_search.sh，则 SCRIPT_NAME=train_grpo_search
@@ -28,7 +28,7 @@ echo "Experiment Name: $EXPERIMENT_NAME"
 
 total_training_steps=300
 
-CUDA_VISIBLE_DEVICES=0,3 python3 -m verl.trainer.main_ppo \
+CUDA_VISIBLE_DEVICES=1 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
@@ -39,7 +39,7 @@ CUDA_VISIBLE_DEVICES=0,3 python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=False \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=/mnt/project/fsh/verl-agent/_model/Qwen2.5-0.5B-Instruct \
+    actor_rollout_ref.model.path=/home/expand_disk/data_repository/fsh2/verl-agent/_model/Qwen3-0.6B \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -70,18 +70,18 @@ CUDA_VISIBLE_DEVICES=0,3 python3 -m verl.trainer.main_ppo \
     env.max_steps=4 \
     env.rollout.n=$group_size \
     env.history_length=4 \
-    env.search.search_url='http://127.0.0.1:8123/retrieve' \
+    env.search.search_url='http://192.168.10.3:8123/retrieve' \
     trainer.critic_warmup=0 \
     trainer.logger=['console','swanlab'] \
-    trainer.project_name='verl_agent_search_multihopdataset_0.5b' \
+    trainer.project_name='verl_agent_search_multihopdataset_qwen3-0.6b' \
     trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.n_gpus_per_node=2 \
+    trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.total_training_steps=$total_training_steps \
     trainer.test_freq=30 \
     trainer.save_freq=$total_training_steps \
     trainer.max_actor_ckpt_to_keep=3 \
-    trainer.val_before_train=True \
+    trainer.val_before_train=False \
     trainer.rollout_data_dir=./_log/$EXPERIMENT_NAME \
     +algorithm.use_multihop_dataset=True \
     +algorithm.retrieval_reward_type=3 \
@@ -89,6 +89,4 @@ CUDA_VISIBLE_DEVICES=0,3 python3 -m verl.trainer.main_ppo \
     +algorithm.use_Rollback=False \
     +algorithm.Max_Rollback_Step=2 \
     +algorithm.use_RollBacked_Step=False \
-
-
     
