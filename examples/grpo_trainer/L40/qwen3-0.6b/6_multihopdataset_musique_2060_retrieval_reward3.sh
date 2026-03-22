@@ -1,6 +1,6 @@
 # 1. 指定 Ray 临时目录
 # 建议选择空间充足的分区，比如 /mnt/project 下新建 ray_tmp 目录
-export RAY_TMPDIR="/tmp_ray"
+export RAY_TMPDIR="./tmp_ray"
 # 确保目录存在，不存在则创建
 mkdir -p $RAY_TMPDIR
 
