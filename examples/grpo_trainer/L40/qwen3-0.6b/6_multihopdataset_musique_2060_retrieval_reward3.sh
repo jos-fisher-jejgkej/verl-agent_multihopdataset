@@ -1,6 +1,6 @@
 # 1. 指定 Ray 临时目录
 # 建议选择空间充足的分区，比如 /mnt/project 下新建 ray_tmp 目录
-export RAY_TMPDIR="/tmp/ray"
+export RAY_TMPDIR="/tmp_ray"
 # 确保目录存在，不存在则创建
 mkdir -p $RAY_TMPDIR
 
@@ -28,7 +28,7 @@ echo "Experiment Name: $EXPERIMENT_NAME"
 
 total_training_steps=300
 
-CUDA_VISIBLE_DEVICES=1 python3 -m verl.trainer.main_ppo \
+CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
