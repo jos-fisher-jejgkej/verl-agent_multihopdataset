@@ -1,9 +1,3 @@
-# 1. 指定 Ray 临时目录
-# 建议选择空间充足的分区，比如 /mnt/project 下新建 ray_tmp 目录
-export RAY_TMPDIR="./tmp_ray"
-# 确保目录存在，不存在则创建
-mkdir -p $RAY_TMPDIR
-
 # export RAY_DEBUG_POST_MORTEM=1
 export WANDB_API_KEY=fb66753c54f510557f918cff15492604850941ee
 export SWANLAB_API_KEY=GkK8zRDsIytg2wAr7Wm6d
@@ -25,6 +19,59 @@ VAL_DATA="./_data/test_nq_hotpotqa_musique_bamboogle.parquet"
 # 获取当前 shell 脚本的 basename（不含路径）
 EXPERIMENT_NAME=$(basename "$0" .sh)  # 如果脚本是 train_grpo_search.sh，则 SCRIPT_NAME=train_grpo_search
 echo "Experiment Name: $EXPERIMENT_NAME"
+
+
+#####################################################################################
+# 核心修改1：动态检测当前路径是否包含autodl，并设置对应的search_url
+current_path=$(pwd)
+if [[ $current_path == *autodl* ]]; then
+    SEARCH_URL='http://127.0.0.1:8889/retrieve'  # 本机8889端口
+    # 1. 指定 Ray 临时目录
+    # 建议选择空间充足的分区，比如 /mnt/project 下新建 ray_tmp 目录
+    export RAY_TMPDIR="/root/autodl-tmp/tmp_ray"
+else
+    SEARCH_URL='http://192.168.10.3:8123/retrieve'  # 原地址
+    export RAY_TMPDIR="/tmp/ray"
+fi
+
+# 确保目录存在，不存在则创建
+mkdir -p $RAY_TMPDIR
+
+# 核心修改2：curl检测URL服务状态（匹配实际业务的JSON请求体格式）
+echo "=== 检测搜索服务可用性: $SEARCH_URL ==="
+# 定义与业务一致的测试JSON请求体
+# 字段说明：
+# - query: 单字符串（非列表），使用测试用查询词
+# - topk: 数字类型（示例值5，可根据实际TOP_K调整）
+# - return_scores: 布尔值True
+TEST_JSON='{
+    "query": "test search query",
+    "topk": 5,
+    "return_scores": true
+}'
+
+# 使用curl发送POST请求，携带标准JSON请求体
+# 参数严格匹配业务调用格式，确保检测结果准确
+HTTP_STATUS=$(curl -X POST \
+    -H "Content-Type: application/json" \
+    -d "$TEST_JSON" \
+    -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout 10 --max-time 15 \
+    "$SEARCH_URL")
+
+# 判断服务状态
+if [[ "$HTTP_STATUS" -ge 200 && "$HTTP_STATUS" -lt 300 ]]; then
+    echo "✅ 搜索服务正常 (HTTP状态码: $HTTP_STATUS)"
+else
+    echo "❌ 搜索服务异常！"
+    echo "  - 检测URL: $SEARCH_URL"
+    echo "  - HTTP状态码: $HTTP_STATUS (预期2xx)"
+    echo "  - 测试请求体: $TEST_JSON"
+    echo "  - 请检查服务是否启动、端口是否正确、请求格式是否匹配"
+    exit 1  # 非0退出码终止脚本
+fi
+#####################################################################################
+
 
 total_training_steps=300
 
@@ -70,7 +117,7 @@ CUDA_VISIBLE_DEVICES=1 python3 -m verl.trainer.main_ppo \
     env.max_steps=4 \
     env.rollout.n=$group_size \
     env.history_length=4 \
-    env.search.search_url='http://192.168.10.3:8123/retrieve' \
+    env.search.search_url=$SEARCH_URL \
     trainer.critic_warmup=0 \
     trainer.logger=['console','swanlab'] \
     trainer.project_name='verl_agent_search_multihopdataset_qwen3-0.6b' \

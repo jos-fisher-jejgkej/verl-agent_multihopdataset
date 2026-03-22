@@ -1,25 +1,24 @@
 # export RAY_DEBUG_POST_MORTEM=1
 export WANDB_API_KEY=fb66753c54f510557f918cff15492604850941ee
 export SWANLAB_API_KEY=GkK8zRDsIytg2wAr7Wm6d
-export RAY_DEBUG=0
+export RAY_DEBUG=1
 
 set -x
 
 ENGINE=${1:-vllm}
 
 # train_data_size=256
-train_data_size=64
+train_data_size=8
 val_data_size=512
 group_size=5
 
 # 从脚本中处理后的文件不包含env_kwargs字段
-TRAIN_DATA="./_data/train.parquet"
+TRAIN_DATA="./_data/train_musique_qwen3max_em_correcttrajectory_rewrittenqueries_documentsllmjudge_effectivedocnum3_2060.parquet"
 VAL_DATA="./_data/test_nq_hotpotqa_musique_bamboogle.parquet"
 
 # 获取当前 shell 脚本的 basename（不含路径）
 EXPERIMENT_NAME=$(basename "$0" .sh)  # 如果脚本是 train_grpo_search.sh，则 SCRIPT_NAME=train_grpo_search
 echo "Experiment Name: $EXPERIMENT_NAME"
-
 
 #####################################################################################
 # 核心修改1：动态检测当前路径是否包含autodl，并设置对应的search_url
@@ -74,7 +73,7 @@ fi
 
 total_training_steps=300
 
-CUDA_VISIBLE_DEVICES=1,2 python3 -m verl.trainer.main_ppo \
+CUDA_VISIBLE_DEVICES=1 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
@@ -89,7 +88,7 @@ CUDA_VISIBLE_DEVICES=1,2 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
@@ -108,7 +107,7 @@ CUDA_VISIBLE_DEVICES=1,2 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
-    +actor_rollout_ref.actor.use_invalid_action_penalty_type=1 \
+    +actor_rollout_ref.actor.use_invalid_action_penalty_type=2 \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.01 \
     algorithm.use_kl_in_reward=False \
     env.env_name=search \
@@ -118,21 +117,21 @@ CUDA_VISIBLE_DEVICES=1,2 python3 -m verl.trainer.main_ppo \
     env.history_length=4 \
     env.search.search_url=$SEARCH_URL \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','swanlab'] \
+    trainer.logger=['console'] \
     trainer.project_name='verl_agent_search_multihopdataset_qwen3-0.6b' \
     trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.n_gpus_per_node=2 \
+    trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.total_training_steps=$total_training_steps \
-    trainer.test_freq=60 \
+    trainer.test_freq=30 \
     trainer.save_freq=$total_training_steps \
     trainer.max_actor_ckpt_to_keep=3 \
     trainer.val_before_train=False \
     trainer.rollout_data_dir=./_log/$EXPERIMENT_NAME \
-    +algorithm.use_multihop_dataset=False \
-    +algorithm.retrieval_reward_type=2 \
+    +algorithm.use_multihop_dataset=True \
+    +algorithm.retrieval_reward_type=3 \
     +algorithm.retrieval_reward_coef=1.0 \
     +algorithm.use_Rollback=False \
     +algorithm.Max_Rollback_Step=2 \
     +algorithm.use_RollBacked_Step=False \
-
+    

@@ -417,6 +417,7 @@ def apply_retrieval_reward_type3(data: DataProto, target_retrieved_doc_ids, conf
 
         raw_prompt_traj = [data_traj.non_tensor_batch['raw_prompt'][i][0]['content'] for i in range(len(data_traj))]
         index_question_traj = {}
+        question_all = []
         for i, raw_prompt in enumerate(raw_prompt_traj):
             if "Prior to this step, you have already taken" in raw_prompt:
                 question = raw_prompt.split("\nYou are an expert agent tasked with answering the given question step-by-step.\nYour question: ")[-1].split("\n\nPrior to this step, you have already taken")[0]
@@ -424,76 +425,54 @@ def apply_retrieval_reward_type3(data: DataProto, target_retrieved_doc_ids, conf
             else:
                 question = raw_prompt.split("\nYou are an expert agent tasked with answering the given question step-by-step.\nYour question: ")[-1].split("\n\nNow it's your turn")[0]
                 index = 0
+            question_all.append(question)
             index_question_traj[index] = index_question_traj.get(index, []) + [data_traj[i]]
-            
+
+        assert len(set(question_all)) == 1  
+
         # 1. 按字典的键（key）升序排序（默认）
         index_question_traj_sorted = dict(sorted(index_question_traj.items()))
         data_traj_sorted = index_question_traj_sorted.values()
         ####################################################################################################3
         
-        if "nq_hotpotqa" in config.data.train_files:
-            target_retrieved_doc_ids_steps_set = set(target_retrieved_doc_ids[question])
-            if not target_retrieved_doc_ids_steps_set:
-                print(f"Warning: question '{question}' has no target retrieved doc ids")
-                exit(0)
-        else:
-            target_retrieved_doc_ids_steps_set = set()
-            for step in target_retrieved_doc_ids[question]:
-                target_retrieved_doc_ids_steps_set.update(step['target_documents_id'])
+        # if "nq_hotpotqa" in config.data.train_files:
+        #     target_retrieved_doc_ids_steps_set = set(target_retrieved_doc_ids[question])
+        #     if not target_retrieved_doc_ids_steps_set:
+        #         print(f"Warning: question '{question}' has no target retrieved doc ids")
+        #         exit(0)
+        # else:
+        #     target_retrieved_doc_ids_steps_set = set()
+        #     for step in target_retrieved_doc_ids[question]:
+        #         target_retrieved_doc_ids_steps_set.update(step['target_documents_id'])
         
-        # retrieved_doc_ids_steps = data_traj.non_tensor_batch['retrieved_doc_ids'][0] # 同一轨迹的所有样本都是一样的
-        
+        target_retrieved_doc_ids_steps_set = set(target_retrieved_doc_ids[question])
+        if not target_retrieved_doc_ids_steps_set:
+            print(f"Warning: question '{question}' has no target retrieved doc ids")
+            exit(0)
+
         # 最后一步骤如果还是search，是没有检索文档的，后续考虑添加
         history_retrieved_doc_ids_steps = set()
         retrieval_reward = 0.0
         invalid_search_action_penalty = -1 / len(index_question_traj_sorted.keys()) # 评估一条轨迹中有多少动作是无效的search动作
         for i, data_item_list in enumerate(data_traj_sorted):
-            to_save_as_history_retrieved_doc_ids_step = None
-            for i, data_item in enumerate(data_item_list):
+            for j, data_item in enumerate(data_item_list):
                 retrieved_doc_ids_step = data_item.non_tensor_batch['retrieved_doc_ids']
                 if retrieved_doc_ids_step:
-                    prompt_ids = data_item.batch['prompts']
-                    prompt_length = prompt_ids.shape[-1]
-                    valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()  
-                    
-                    ######### 先不考虑回溯 ##################################################################
-                    # # 使用回溯步骤
-                    # if config.algorithm.use_RollBacked_Step:
-                    #     # 主分支按正常流程计算
-                    #     if data_item.non_tensor_batch['is_rollback_step'] == False:
-                    #         # 计算与目标文档的交集（排除历史已检索的文档）
-                    #         to_save_as_history_retrieved_doc_ids_step = retrieved_doc_ids_step
-                    #         new_retrieved_doc_ids_step_set = set(retrieved_doc_ids_step) - history_retrieved_doc_ids_steps
-                    #         intersection = target_retrieved_doc_ids_steps_set & new_retrieved_doc_ids_step_set
-                    #         num_valid_retrieved_doc_ids_step = len(intersection)
-                    #     # 回退步骤，是无效步骤，惩罚
-                    #     else:
-                    #         num_valid_retrieved_doc_ids_step = 0 # 回滚步骤，是无效步骤，惩罚
-                    # # 不使用回溯步骤
-                    # else:
-                    #     to_save_as_history_retrieved_doc_ids_step = retrieved_doc_ids_step
-                    #     new_retrieved_doc_ids_step_set = set(retrieved_doc_ids_step) - history_retrieved_doc_ids_steps
-                    #     intersection = target_retrieved_doc_ids_steps_set & new_retrieved_doc_ids_step_set
-                    #     num_valid_retrieved_doc_ids_step = len(intersection)
-                    
-                    to_save_as_history_retrieved_doc_ids_step = retrieved_doc_ids_step
-                    new_retrieved_doc_ids_step_set = set(retrieved_doc_ids_step) - history_retrieved_doc_ids_steps
-                    intersection = target_retrieved_doc_ids_steps_set & new_retrieved_doc_ids_step_set
-                    num_valid_retrieved_doc_ids_step = len(intersection)
-                    if i == 0: # 存在复制的情况，所以每步只累计第一个step的retrieval_reward
+                    if j == 0: # 存在复制的情况，所以每步只累计第一个step的retrieval_reward
+                        to_save_as_history_retrieved_doc_ids_step = retrieved_doc_ids_step
+                        new_retrieved_doc_ids_step_set = set(retrieved_doc_ids_step) - history_retrieved_doc_ids_steps
+                        intersection = target_retrieved_doc_ids_steps_set & new_retrieved_doc_ids_step_set
+                        num_valid_retrieved_doc_ids_step = len(intersection)
                         retrieval_reward += num_valid_retrieved_doc_ids_step / topk if num_valid_retrieved_doc_ids_step > 0 else invalid_search_action_penalty
-
-            # 注意每个步骤包含一个list的经验，可能是回退步骤、可能是被复制的步骤，只保存原始经验的检索结果作为历史已检索文档（每个步骤保留一次）
-            if to_save_as_history_retrieved_doc_ids_step:
-                history_retrieved_doc_ids_steps.update(to_save_as_history_retrieved_doc_ids_step)
+                        # 注意每个步骤包含一个list的经验，可能是回退步骤、可能是被复制的步骤，只保存原始经验的检索结果作为历史已检索文档（每个步骤保留一次）
+                        history_retrieved_doc_ids_steps.update(to_save_as_history_retrieved_doc_ids_step)
         
-        for i, data_item_list in enumerate(data_traj_sorted):
+        for data_item_list in data_traj_sorted:
             for data_item in data_item_list:
                 prompt_ids = data_item.batch['prompts']
                 prompt_length = prompt_ids.shape[-1]
                 valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()  
-                retrieval_reward_tensor = torch.tensor(retrieval_reward * config.algorithm.retrieval_reward_coef, dtype=torch.float32, device=prompt_ids.device).squeeze(0)
-                data_item.batch['token_level_scores'][valid_response_length - 1] += retrieval_reward_tensor
+                data_item.batch['token_level_scores'][valid_response_length - 1] += torch.tensor(retrieval_reward * config.algorithm.retrieval_reward_coef, dtype=torch.float32, device=prompt_ids.device).squeeze(0)
                 data_item.non_tensor_batch['retrieval_reward'] = np.array(retrieval_reward)
         retrieval_reward_all[data.non_tensor_batch['index'] == traj_id] = np.float32(retrieval_reward)
     
