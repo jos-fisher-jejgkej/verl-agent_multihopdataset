@@ -18,9 +18,11 @@ train_data_size=64
 val_data_size=512
 group_size=5
 
+
+
 # 从脚本中处理后的文件不包含env_kwargs字段
-TRAIN_DATA="/home/expand_disk/data_repository/zxw2/Search-R1/_multihot_dataset_v2/nq_hotpotqa/all/train_nq_hotpotqa_qwen3max_em_correcttrajectory_rewrittenqueries_documentsllmjudge_effectivedocnum3_0_50000_11655.parquet"
-VAL_DATA="/home/expand_disk/data_repository/fsh2/verl-agent_multihopdataset/_data/test_nq_hotpotqa_musique_bamboogle.parquet"
+TRAIN_DATA="./_data/train_nq_hotpotqa_qwen3max_em_correcttrajectory_rewrittenqueries_documentsllmjudge_effectivedocnum3_0_50000_11655.parquet"
+VAL_DATA="./_data/test_nq_hotpotqa_musique_bamboogle.parquet"
 
 # 获取当前 shell 脚本的 basename（不含路径）
 EXPERIMENT_NAME=$(basename "$0" .sh)  # 如果脚本是 train_grpo_search.sh，则 SCRIPT_NAME=train_grpo_search
@@ -39,7 +41,7 @@ CUDA_VISIBLE_DEVICES=0 python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=False \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=/home/expand_disk/data_repository/fsh2/verl-agent/_model/Qwen3-0.6B \
+    actor_rollout_ref.model.path=./_model/Qwen3-0.6B \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.model.use_remove_padding=True \
