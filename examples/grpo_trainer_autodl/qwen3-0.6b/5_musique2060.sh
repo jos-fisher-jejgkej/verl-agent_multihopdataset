@@ -13,7 +13,7 @@ val_data_size=512
 group_size=5
 
 # 从脚本中处理后的文件不包含env_kwargs字段
-TRAIN_DATA="./_data/train.parquet"
+TRAIN_DATA="./_data/train_musique_qwen3max_em_correcttrajectory_rewrittenqueries_documentsllmjudge_effectivedocnum3_2060.parquet"
 VAL_DATA="./_data/test_nq_hotpotqa_musique_bamboogle.parquet"
 
 # 获取当前 shell 脚本的 basename（不含路径）
@@ -22,17 +22,20 @@ echo "Experiment Name: $EXPERIMENT_NAME"
 
 
 #####################################################################################
-# 核心修改1：动态检测当前路径是否包含autodl，并设置对应的search_url
-current_path=$(pwd)
-if [[ $current_path == *autodl* ]]; then
-    SEARCH_URL='http://127.0.0.1:8889/retrieve'  # 本机8889端口
-    # 1. 指定 Ray 临时目录
-    # 建议选择空间充足的分区，比如 /mnt/project 下新建 ray_tmp 目录
-    export RAY_TMPDIR="/root/autodl-tmp/tmp_ray"
-else
-    SEARCH_URL='http://192.168.10.3:8123/retrieve'  # 原地址
-    export RAY_TMPDIR="/tmp/ray"
-fi
+# # 核心修改1：动态检测当前路径是否包含autodl，并设置对应的search_url
+# current_path=$(pwd)
+# if [[ $current_path == *autodl* ]]; then
+#     SEARCH_URL='http://127.0.0.1:8889/retrieve'  # 本机8889端口
+#     # 1. 指定 Ray 临时目录
+#     # 建议选择空间充足的分区，比如 /mnt/project 下新建 ray_tmp 目录
+#     export RAY_TMPDIR="/root/autodl-tmp/tmp_ray"
+# else
+#     SEARCH_URL='http://192.168.10.3:8123/retrieve'  # 原地址
+#     export RAY_TMPDIR="/tmp/ray"
+# fi
+
+SEARCH_URL='http://127.0.0.1:8123/retrieve'
+export RAY_TMPDIR="/root/autodl-tmp/tmp_ray"
 
 # 确保目录存在，不存在则创建
 mkdir -p $RAY_TMPDIR
@@ -74,7 +77,7 @@ fi
 
 total_training_steps=300
 
-CUDA_VISIBLE_DEVICES=1 python3 -m verl.trainer.main_ppo \
+CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
@@ -119,20 +122,20 @@ CUDA_VISIBLE_DEVICES=1 python3 -m verl.trainer.main_ppo \
     env.search.search_url=$SEARCH_URL \
     trainer.critic_warmup=0 \
     trainer.logger=['console','swanlab'] \
-    trainer.project_name='verl_agent_search_multihopdataset_qwen3-0.6b' \
+    trainer.project_name='verl_agent_search_multihopdataset_qwen3-0.6b-autodl' \
     trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.n_gpus_per_node=1 \
+    trainer.n_gpus_per_node=2 \
     trainer.nnodes=1 \
     trainer.total_training_steps=$total_training_steps \
     trainer.test_freq=30 \
     trainer.save_freq=$total_training_steps \
-    trainer.max_actor_ckpt_to_keep=3 \
+    trainer.max_actor_ckpt_to_keep=1 \
     trainer.val_before_train=False \
     trainer.rollout_data_dir=./_log/$EXPERIMENT_NAME \
     +algorithm.use_multihop_dataset=False \
-    +algorithm.retrieval_reward_type=2 \
+    +algorithm.retrieval_reward_type=3 \
     +algorithm.retrieval_reward_coef=1.0 \
     +algorithm.use_Rollback=False \
     +algorithm.Max_Rollback_Step=2 \
     +algorithm.use_RollBacked_Step=False \
-
+    

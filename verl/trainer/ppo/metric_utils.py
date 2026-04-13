@@ -197,7 +197,15 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> Dict[str,
     if "search_action_validity" in batch.non_tensor_batch:
         search_action_validity = batch.non_tensor_batch["search_action_validity"][unique_idx]
         metrics["episode/search_action_validity"] = search_action_validity[search_action_validity != None].mean().item()
-      
+    if "num_hit" in batch.non_tensor_batch:
+        num_hit0 = (batch.non_tensor_batch["num_hit"][unique_idx] == 0).sum()
+        num_hit1 = (batch.non_tensor_batch["num_hit"][unique_idx] == 1).sum()
+        num_hit2 = (batch.non_tensor_batch["num_hit"][unique_idx] == 2).sum()
+        num_hit3 = (batch.non_tensor_batch["num_hit"][unique_idx] == 3).sum()
+        metrics["episode/num_hit0"] = num_hit0
+        metrics["episode/num_hit1"] = num_hit1
+        metrics["episode/num_hit2"] = num_hit2
+        metrics["episode/num_hit3"] = num_hit3
     return metrics
 
 

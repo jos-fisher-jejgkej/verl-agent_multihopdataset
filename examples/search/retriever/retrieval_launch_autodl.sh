@@ -25,7 +25,7 @@ corpus_file=$save_path/wiki-18.jsonl
 retriever_name=e5
 retriever_path=./_model/e5-base-v2
 
-# CUDA_VISIBLE_DEVICES=0,1,2,3 \
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
 python examples/search/retriever/retrieval_server.py \
   --index_path $index_file \
   --corpus_path $corpus_file \
@@ -33,8 +33,7 @@ python examples/search/retriever/retrieval_server.py \
   --retriever_name $retriever_name \
   --retriever_model $retriever_path \
   --port 8123 \
-  
-  # --faiss_gpu \
+  --faiss_gpu \
 
 
 # python3 -c "
