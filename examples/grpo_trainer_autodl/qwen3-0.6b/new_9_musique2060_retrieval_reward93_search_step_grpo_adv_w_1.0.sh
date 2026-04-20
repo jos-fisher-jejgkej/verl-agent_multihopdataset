@@ -76,7 +76,7 @@ fi
 
 total_training_steps=300
 
-CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
+CUDA_VISIBLE_DEVICES=0,1 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
@@ -137,9 +137,6 @@ CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     +algorithm.use_Rollback=False \
     +algorithm.Max_Rollback_Step=2 \
     +algorithm.use_RollBacked_Step=False \
-    +algorithm.search_step_adv_w=0.5 \
-    +algorithm.retrieval_reward_type=10 \
-    +algorithm.retrieval_reward_type10_backend=vllm \
-    +algorithm.retrieval_reward_type10_vllm_url=http://localhost:8000 \
-    +algorithm.retrieval_reward_type10_model=/root/autodl-tmp/verl-agent_multihopdataset/_model/Qwen3-Reranker-0.6B \
-    +algorithm.retrieval_reward_type10_batch_size=256 \
+    +algorithm.retrieval_reward_type=93 \
+    +algorithm.search_step_grpo_adv_w=1.0 \
+    

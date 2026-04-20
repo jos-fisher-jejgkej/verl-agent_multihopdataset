@@ -92,7 +92,7 @@ class SearchEnv(BaseTextEnv):
 
         if done:
             return BaseTextEnvStepOutput(
-                observations=[], reward=reward, done=done, metadata={"data_source": self.data_source, "tool_calling": False, "retrieved_doc_ids": None}, postprocessed_action=action
+                observations=[], reward=reward, done=done, metadata={"data_source": self.data_source, "tool_calling": False, "retrieved_docs": None, "retrieved_doc_ids": None}, postprocessed_action=action
             )
 
         try:
@@ -118,6 +118,7 @@ class SearchEnv(BaseTextEnv):
             "tool_name": "search",
             "tool_input": query,
             "data_source": self.data_source,
+            "retrieved_docs": metadata['retrieved_docs'] if metadata else None,
             "retrieved_doc_ids": metadata['retrieved_doc_ids'] if metadata else None,
         }
 

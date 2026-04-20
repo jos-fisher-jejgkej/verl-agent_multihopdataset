@@ -10,6 +10,8 @@
 #   bash scripts/serve_reranker.sh Qwen/Qwen3-Reranker-4B 8001    # 4B, port 8001
 #   bash scripts/serve_reranker.sh Qwen/Qwen3-Reranker-8B 8002 0.85 2  # 8B, 2 GPUs
 #
+
+
 # Supported models:
 #   Qwen/Qwen3-Reranker-0.6B  (default, ~1.2 GB VRAM, fits on any GPU)
 #   Qwen/Qwen3-Reranker-4B    (~8 GB VRAM, good balance of speed / quality)
@@ -48,3 +50,12 @@ vllm serve "${MODEL}" \
     --max-model-len 8192 \
     --trust-remote-code \
     --disable-log-requests
+
+#   CUDA_VISIBLE_DEVICES=4 bash /root/autodl-tmp/verl-agent_multihopdataset/examples/reranker/serve_reranker_vllm.sh /root/autodl-tmp/verl-agent_multihopdataset/_model/Qwen3-Reranker-0.6B 8001 0.45 1
+#   CUDA_VISIBLE_DEVICES=4 bash /root/autodl-tmp/verl-agent_multihopdataset/examples/reranker/serve_reranker_vllm.sh /root/autodl-tmp/verl-agent_multihopdataset/_model/new_2_qwen3_reranker_0.6b_step3_MAX_NEGATIVE_SAMPLES15 8002 0.45 1
+
+# adapters_path=/mnt/project/fsh/ms-swift/outputs/20260412_190430/v0-20260412-190442/checkpoint-231-merged # new_2_qwen3_reranker_0.6b_step3_MAX_NEGATIVE_SAMPLES15.sh
+# adapters_path=/mnt/project/fsh/ms-swift/outputs/20260413_013216/v0-20260413-013229/checkpoint-234-merged # new_2_qwen3_reranker_4b_step3_MAX_NEGATIVE_SAMPLES15.sh
+# scp -P 10023 -r lcwt@111.0.130.56:/mnt/project/fsh/ms-swift/outputs/20260412_190430/v0-20260412-190442/checkpoint-231-merged /root/autodl-tmp/verl-agent_multihopdataset/_model/new_2_qwen3_reranker_0.6b_step3_MAX_NEGATIVE_SAMPLES15
+# scp -P 10023 -r lcwt@111.0.130.56:/mnt/project/fsh/ms-swift/outputs/20260413_013216/v0-20260413-013229/checkpoint-234-merged /root/autodl-tmp/verl-agent_multihopdataset/_model/new_2_qwen3_reranker_4b_step3_MAX_NEGATIVE_SAMPLES15
+# zaq1,lp-

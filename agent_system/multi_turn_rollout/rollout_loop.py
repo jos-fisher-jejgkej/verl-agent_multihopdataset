@@ -408,7 +408,9 @@ class TrajectoryCollector:
             #             retrieved_doc_ids[i].append(info['retrieved_doc_ids'])
             if 'retrieved_doc_ids' in infos[0]:
                 batch.non_tensor_batch['retrieved_doc_ids'] = [info['retrieved_doc_ids'] for info in infos]
-                
+            if 'retrieved_docs' in infos[0]:
+                batch.non_tensor_batch['retrieved_docs'] = [info['retrieved_docs'] for info in infos]
+                      
             # Create reward tensor, only assign rewards for active environments
             # episode_rewards += torch_to_numpy(rewards) * torch_to_numpy(active_masks)
             episode_rewards[active_masks] += torch_to_numpy(rewards)[active_masks]

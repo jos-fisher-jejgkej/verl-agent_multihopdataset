@@ -1,25 +1,3 @@
-# export RAY_DEBUG_POST_MORTEM=1
-export WANDB_API_KEY=fb66753c54f510557f918cff15492604850941ee
-export SWANLAB_API_KEY=GkK8zRDsIytg2wAr7Wm6d
-export RAY_DEBUG=1
-
-set -x
-
-ENGINE=${1:-vllm}
-
-# train_data_size=256
-train_data_size=8
-val_data_size=512
-group_size=5
-
-# 从脚本中处理后的文件不包含env_kwargs字段
-TRAIN_DATA="./_data/train_musique_qwen3max_em_correcttrajectory_rewrittenqueries_documentsllmjudge_effectivedocnum3_2060.parquet"
-VAL_DATA="./_data/test_nq_hotpotqa_musique_bamboogle.parquet"
-
-# 获取当前 shell 脚本的 basename（不含路径）
-EXPERIMENT_NAME=$(basename "$0" .sh)  # 如果脚本是 train_grpo_search.sh，则 SCRIPT_NAME=train_grpo_search
-echo "Experiment Name: $EXPERIMENT_NAME"
-
 #####################################################################################
 # # 核心修改1：动态检测当前路径是否包含autodl，并设置对应的search_url
 # current_path=$(pwd)
@@ -74,9 +52,61 @@ else
 fi
 #####################################################################################
 
+
+reranker_model_path=/root/autodl-tmp/verl-agent_multihopdataset/_model/Qwen3-Reranker-0.6B
+VLLM_URL="http://localhost:8001"
+
+#####################################################################################
+# 新增：VLLM 重排模型服务可用性检测
+echo -e "\n=== 检测 VLLM 重排服务可用性: $VLLM_URL ==="
+
+# VLLM 标准健康检查接口（通用、无权限、无需模型参数）
+VLLM_HEALTH_URL="${VLLM_URL}/health"
+
+# 发送健康检查请求
+VLLM_HTTP_STATUS=$(curl -X GET \
+    -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout 10 --max-time 15 \
+    "$VLLM_HEALTH_URL")
+
+# 判断VLLM服务状态
+if [[ "$VLLM_HTTP_STATUS" -ge 200 && "$VLLM_HTTP_STATUS" -lt 300 ]]; then
+    echo "✅ VLLM 服务正常 (HTTP状态码: $VLLM_HTTP_STATUS)"
+else
+    echo "❌ VLLM 重排服务异常！"
+    echo "  - 健康检查URL: $VLLM_HEALTH_URL"
+    echo "  - HTTP状态码: $VLLM_HTTP_STATUS (预期2xx)"
+    echo "  - 请检查：VLLM服务是否启动、端口8001是否监听、防火墙/端口是否放行"
+    exit 1
+fi
+#####################################################################################
+
+
+# export RAY_DEBUG_POST_MORTEM=1
+export WANDB_API_KEY=fb66753c54f510557f918cff15492604850941ee
+export SWANLAB_API_KEY=GkK8zRDsIytg2wAr7Wm6d
+export RAY_DEBUG=0
+
+set -x
+
+ENGINE=${1:-vllm}
+
+# train_data_size=256
+train_data_size=64
+val_data_size=512
+group_size=5
+
+# 从脚本中处理后的文件不包含env_kwargs字段
+TRAIN_DATA="./_data/train_musique_qwen3max_em_correcttrajectory_rewrittenqueries_documentsllmjudge_effectivedocnum3_2060.parquet"
+VAL_DATA="./_data/test_nq_hotpotqa_musique_bamboogle.parquet"
+
+# 获取当前 shell 脚本的 basename（不含路径）
+EXPERIMENT_NAME=$(basename "$0" .sh)  # 如果脚本是 train_grpo_search.sh，则 SCRIPT_NAME=train_grpo_search
+echo "Experiment Name: $EXPERIMENT_NAME"
+
 total_training_steps=300
 
-CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
+CUDA_VISIBLE_DEVICES=0,1 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
@@ -91,8 +121,8 @@ CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -120,15 +150,15 @@ CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     env.history_length=4 \
     env.search.search_url=$SEARCH_URL \
     trainer.critic_warmup=0 \
-    trainer.logger=['console'] \
-    trainer.project_name='verl_agent_search_multihopdataset_qwen3-0.6b' \
+    trainer.logger=['console','swanlab'] \
+    trainer.project_name='verl_agent_search_multihopdataset_qwen3-0.6b-autodl' \
     trainer.experiment_name=$EXPERIMENT_NAME \
     trainer.n_gpus_per_node=2 \
     trainer.nnodes=1 \
     trainer.total_training_steps=$total_training_steps \
     trainer.test_freq=30 \
     trainer.save_freq=$total_training_steps \
-    trainer.max_actor_ckpt_to_keep=3 \
+    trainer.max_actor_ckpt_to_keep=1 \
     trainer.val_before_train=False \
     trainer.rollout_data_dir=./_log/$EXPERIMENT_NAME \
     +algorithm.use_multihop_dataset=True \
@@ -137,12 +167,10 @@ CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     +algorithm.use_Rollback=False \
     +algorithm.Max_Rollback_Step=2 \
     +algorithm.use_RollBacked_Step=False \
-    +algorithm.invalid_search_action_penalty=-0.2 \
     +algorithm.search_step_adv_w=1.0 \
-    +algorithm.retrieval_reward_type=91 \
+    +algorithm.retrieval_reward_type=10 \
+    +algorithm.retrieval_reward_type10_backend=vllm \
+    +algorithm.retrieval_reward_type10_batch_size=256 \
+    +algorithm.retrieval_reward_type10_vllm_url=$VLLM_URL \
+    +algorithm.retrieval_reward_type10_model=$reranker_model_path \
 
-    # +algorithm.retrieval_reward_type=10 \
-    # +algorithm.retrieval_reward_type10_backend=vllm \
-    # +algorithm.retrieval_reward_type10_vllm_url=http://localhost:8000 \
-    # +algorithm.retrieval_reward_type10_model=/root/autodl-tmp/verl-agent_multihopdataset/_model/Qwen3-Reranker-0.6B \
-    # +algorithm.retrieval_reward_type10_batch_size=256 \

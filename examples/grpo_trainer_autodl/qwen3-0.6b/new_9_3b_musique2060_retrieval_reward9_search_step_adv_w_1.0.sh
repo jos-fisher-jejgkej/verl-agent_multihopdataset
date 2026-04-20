@@ -1,14 +1,14 @@
 # export RAY_DEBUG_POST_MORTEM=1
 export WANDB_API_KEY=fb66753c54f510557f918cff15492604850941ee
 export SWANLAB_API_KEY=GkK8zRDsIytg2wAr7Wm6d
-export RAY_DEBUG=1
+export RAY_DEBUG=0
 
 set -x
 
 ENGINE=${1:-vllm}
 
 # train_data_size=256
-train_data_size=8
+train_data_size=64
 val_data_size=512
 group_size=5
 
@@ -76,7 +76,7 @@ fi
 
 total_training_steps=300
 
-CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
+CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     algorithm.adv_estimator=grpo \
     data.train_files=$TRAIN_DATA \
     data.val_files=$VAL_DATA \
@@ -87,11 +87,11 @@ CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     data.filter_overlong_prompts=False \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=./_model/Qwen3-0.6B \
+    actor_rollout_ref.model.path=./_model/Qwen2.5-3B-Instruct \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
@@ -120,15 +120,15 @@ CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     env.history_length=4 \
     env.search.search_url=$SEARCH_URL \
     trainer.critic_warmup=0 \
-    trainer.logger=['console'] \
-    trainer.project_name='verl_agent_search_multihopdataset_qwen3-0.6b' \
+    trainer.logger=['console','swanlab'] \
+    trainer.project_name='verl_agent_search_multihopdataset_qwen3-0.6b-autodl' \
     trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.n_gpus_per_node=2 \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.total_training_steps=$total_training_steps \
     trainer.test_freq=30 \
     trainer.save_freq=$total_training_steps \
-    trainer.max_actor_ckpt_to_keep=3 \
+    trainer.max_actor_ckpt_to_keep=1 \
     trainer.val_before_train=False \
     trainer.rollout_data_dir=./_log/$EXPERIMENT_NAME \
     +algorithm.use_multihop_dataset=True \
@@ -137,12 +137,6 @@ CUDA_VISIBLE_DEVICES=2,3 python3 -m verl.trainer.main_ppo ray_init.num_cpus=32 \
     +algorithm.use_Rollback=False \
     +algorithm.Max_Rollback_Step=2 \
     +algorithm.use_RollBacked_Step=False \
-    +algorithm.invalid_search_action_penalty=-0.2 \
+    +algorithm.retrieval_reward_type=9 \
     +algorithm.search_step_adv_w=1.0 \
-    +algorithm.retrieval_reward_type=91 \
-
-    # +algorithm.retrieval_reward_type=10 \
-    # +algorithm.retrieval_reward_type10_backend=vllm \
-    # +algorithm.retrieval_reward_type10_vllm_url=http://localhost:8000 \
-    # +algorithm.retrieval_reward_type10_model=/root/autodl-tmp/verl-agent_multihopdataset/_model/Qwen3-Reranker-0.6B \
-    # +algorithm.retrieval_reward_type10_batch_size=256 \
+    
